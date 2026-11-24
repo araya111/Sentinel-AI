@@ -49,16 +49,57 @@ function resolveGhCli() {
   return 'gh';
 }
 
+// Helper to resolve GitHub Token via env, GitHub CLI, or Git Credential Manager
+function resolveGitHubToken() {
+  if (process.env.GITHUB_TOKEN && process.env.GITHUB_TOKEN.trim()) {
+    console.log('[Deploy Amplify] Using GITHUB_TOKEN from process environment.');
+    return process.env.GITHUB_TOKEN.trim();
+  }
+  if (process.env.GH_TOKEN && process.env.GH_TOKEN.trim()) {
+    console.log('[Deploy Amplify] Using GH_TOKEN from process environment.');
+    return process.env.GH_TOKEN.trim();
+  }
+
+  // 1. Try GitHub CLI
+  try {
+    const ghBin = resolveGhCli();
+    const out = execFileSync(ghBin, ['auth', 'token'], { encoding: 'utf8' }).trim();
+    if (out) {
+      console.log('[Deploy Amplify] Retrieved GitHub Token via GitHub CLI (gh).');
+      return out;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Try Git Credential Manager
+  try {
+    const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
+    const creds = execFileSync(gitBin, ['credential', 'fill'], {
+      input: 'protocol=https\nhost=github.com\n\n',
+      encoding: 'utf8',
+    });
+    const match = creds.match(/^password=(.+)$/m);
+    if (match && match[1]) {
+      console.log('[Deploy Amplify] Retrieved GitHub Token via Git Credential Manager.');
+      return match[1].trim();
+    }
+  } catch {
+    // ignore
+  }
+
+  return '';
+}
+
 const awsBin = resolveAwsCli();
 const ghBin = resolveGhCli();
 
 console.log(`[Deploy Amplify] AWS CLI: ${awsBin}`);
-console.log(`[Deploy Amplify] GitHub CLI: ${ghBin}`);
 
 function runAws(args) {
   return execFileSync(awsBin, args, {
     encoding: 'utf8',
-    env: { ...process.env, AWS_PROFILE: 'sentinel-ai', AWS_REGION: 'us-east-1' },
+    env: { ...process.env, AWS_PROFILE: 'sentinel-ai', AWS_REGION: 'us-east-1', AWS_SDK_LOAD_CONFIG: '1' },
   });
 }
 
@@ -118,16 +159,11 @@ async function main() {
   };
 
   // 4. Retrieve GitHub Token
-  console.log('[Deploy Amplify] Fetching GitHub Token via GitHub CLI...');
-  let ghToken = '';
-  try {
-    ghToken = execFileSync(ghBin, ['auth', 'token'], { encoding: 'utf8' }).trim();
-  } catch (err) {
-    throw new Error('[Deploy Amplify] Failed to retrieve GitHub token via `gh auth token`. Please complete GitHub authentication first.');
-  }
+  console.log('[Deploy Amplify] Resolving GitHub Token for Amplify repository access...');
+  const ghToken = resolveGitHubToken();
 
   if (!ghToken) {
-    throw new Error('[Deploy Amplify] Retrieved GitHub token is empty.');
+    throw new Error('[Deploy Amplify] Failed to retrieve GitHub token via environment, GitHub CLI, or Git Credential Manager.');
   }
   console.log('[Deploy Amplify] GitHub Token verified (masked).');
 
