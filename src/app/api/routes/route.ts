@@ -14,7 +14,7 @@ import {
 } from '@/lib/mockData';
 import { RouteOption, SafeHaven } from '@/types/sentinel';
 
-const region = process.env.AWS_REGION || 'us-east-1';
+const region = process.env.APP_AWS_REGION || process.env.AWS_REGION || 'us-east-1';
 const geoRoutesClient = new GeoRoutesClient({ region });
 
 function haversineMeters(c1: [number, number], c2: [number, number]): number {

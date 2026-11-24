@@ -22,10 +22,12 @@ interface StealthListenerProps {
   onTriggerStealth: () => void;
   onTriggerEscalation: () => void;
   onTriggerPhoneDrop: () => void;
+  onTriggerSnsSos?: () => void;
   onResetDemo: () => void;
   isCallActive: boolean;
   onSpeechRecognized: (transcript: string) => void;
   micSuspended?: boolean;
+  snsReceiptId?: string | null;
   engineStatus?: {
     source: 'aws-live' | 'mock-fallback';
     modelUsed?: string;
@@ -40,10 +42,12 @@ export default function StealthListener({
   onTriggerStealth,
   onTriggerEscalation,
   onTriggerPhoneDrop,
+  onTriggerSnsSos,
   onResetDemo,
   isCallActive,
   onSpeechRecognized,
   micSuspended = false,
+  snsReceiptId,
   engineStatus,
 }: StealthListenerProps) {
   const [speechSupported, setSpeechSupported] = useState<boolean>(true);
@@ -228,6 +232,9 @@ export default function StealthListener({
       } else if (e.key === '3') {
         e.preventDefault();
         onTriggerPhoneDrop();
+      } else if (e.key === '4') {
+        e.preventDefault();
+        onTriggerSnsSos?.();
       } else if (e.key === '0') {
         e.preventDefault();
         onResetDemo();
@@ -238,7 +245,7 @@ export default function StealthListener({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [onTriggerStealth, onTriggerEscalation, onTriggerPhoneDrop, onResetDemo]);
+  }, [onTriggerStealth, onTriggerEscalation, onTriggerPhoneDrop, onTriggerSnsSos, onResetDemo]);
 
   return (
     <div className="flex flex-col gap-2 w-full">
@@ -401,11 +408,26 @@ export default function StealthListener({
               </kbd>
             </button>
 
+            {/* [4] Trigger Offline SNS SOS Beacon */}
+            <button
+              type="button"
+              onClick={onTriggerSnsSos}
+              className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/50 text-slate-200 transition-all text-left"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate">SNS SOS Beacon</span>
+              </div>
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-emerald-300">
+                4
+              </kbd>
+            </button>
+
             {/* [0] Reset Demo State */}
             <button
               type="button"
               onClick={onResetDemo}
-              className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-600 text-slate-300 transition-all text-left"
+              className="col-span-2 flex items-center justify-between p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-600 text-slate-300 transition-all text-left"
             >
               <div className="flex items-center gap-1.5 truncate">
                 <RotateCcw className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -415,6 +437,19 @@ export default function StealthListener({
                 0
               </kbd>
             </button>
+          </div>
+        )}
+
+        {/* SNS Message Receipt Badge */}
+        {snsReceiptId && (
+          <div className="px-3 py-1.5 bg-emerald-950/60 border-t border-emerald-800/60 flex items-center justify-between text-[10px] font-mono text-emerald-300">
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              SNS Beacon Dispatched:
+            </span>
+            <span className="truncate max-w-[170px]" title={snsReceiptId}>
+              {snsReceiptId}
+            </span>
           </div>
         )}
       </div>

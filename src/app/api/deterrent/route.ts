@@ -31,7 +31,7 @@ export type DeterrentResponse = {
 };
 
 // Instantiate clients without hardcoded credentials (delegating to AWS CLI profile / IAM chain)
-const region = process.env.AWS_REGION || 'us-east-1';
+const region = process.env.APP_AWS_REGION || process.env.AWS_REGION || 'us-east-1';
 const bedrockClient = new BedrockRuntimeClient({ region });
 const pollyClient = new PollyClient({ region });
 

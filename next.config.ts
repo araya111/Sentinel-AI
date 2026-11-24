@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
     '@aws-sdk/client-geo-routes',
     '@aws-sdk/client-dynamodb',
     '@aws-sdk/lib-dynamodb',
+    '@aws-sdk/client-sns',
   ],
   cacheComponents: true,
   partialPrefetching: true,

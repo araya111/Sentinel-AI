@@ -10,7 +10,7 @@ import {
   Navigation,
 } from 'lucide-react';
 import { SafeHaven, SentinelEvent, ResponderInfo } from '@/types/sentinel';
-import { realtimeMeshAdapter } from '@/lib/aws/realtimeMeshAdapter';
+import { realtimeMeshAdapter, MeshTransportStatus } from '@/lib/aws/realtimeMeshAdapter';
 import { deterrentVoiceAdapter } from '@/lib/aws/deterrentVoiceAdapter';
 import StealthListener from './StealthListener';
 import DeterrentCallUI from './DeterrentCallUI';
@@ -36,7 +36,8 @@ export default function MobileShell() {
   const [isEscalated, setIsEscalated] = useState(false);
   const [dispatchedResponder, setDispatchedResponder] = useState<ResponderInfo | null>(null);
   const [speechSnippet, setSpeechSnippet] = useState<string>('');
-  const [networkStatus, setNetworkStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
+  const [networkStatus, setNetworkStatus] = useState<MeshTransportStatus>('connecting');
+  const [snsReceiptId, setSnsReceiptId] = useState<string | null>(null);
 
   // Phase 2 Live Engine States
   const [spokenReply, setSpokenReply] = useState<string>(
@@ -250,6 +251,29 @@ export default function MobileShell() {
     });
   }, []);
 
+  // Action: Trigger Offline SNS SOS Beacon [4]
+  const handleTriggerSnsSos = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sos-fallback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incidentId: sessionIncidentIdRef.current || `inc_${Date.now().toString(36)}`,
+          triggerType: 'MANUAL_SOS_BEACON',
+          threatLevel: 'CRITICAL',
+          location: { lat: VICTIM_INITIAL_COORDS.lat, lng: VICTIM_INITIAL_COORDS.lng },
+          notes: 'Manual offline emergency SOS beacon dispatched via SNS',
+        }),
+      });
+      const data = await res.json();
+      if (data.snsMessageId) {
+        setSnsReceiptId(data.snsMessageId);
+      }
+    } catch (err) {
+      console.warn('[MobileShell] SOS Fallback error:', err);
+    }
+  }, []);
+
   // Action: Reset Demo [0]
   const handleResetDemo = useCallback(async () => {
     requestSeqRef.current += 1;
@@ -263,6 +287,7 @@ export default function MobileShell() {
     sessionIncidentIdRef.current = null;
     setMicSuspended(false);
     setIsLoadingTurn(false);
+    setSnsReceiptId(null);
     await realtimeMeshAdapter.resetDemo();
   }, []);
 
@@ -279,7 +304,7 @@ export default function MobileShell() {
           <div className="w-1.5 h-1.5 rounded-full bg-slate-700" />
         </div>
         <div className="flex items-center gap-2 text-slate-400 text-xs">
-          <Wifi className={`w-3.5 h-3.5 ${networkStatus === 'connected' ? 'text-cyan-400' : 'text-slate-500'}`} />
+          <Wifi className={`w-3.5 h-3.5 ${networkStatus === 'APPSYNC_LIVE' || networkStatus === 'SSE_FALLBACK' ? 'text-cyan-400' : 'text-slate-500'}`} />
           <Battery className="w-4 h-4 text-slate-300" />
         </div>
       </div>
@@ -305,13 +330,41 @@ export default function MobileShell() {
         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[10px]">
           <span
             className={`w-1.5 h-1.5 rounded-full ${
-              networkStatus === 'connected' ? 'bg-cyan-400 animate-pulse' : 'bg-amber-400'
+              networkStatus === 'APPSYNC_LIVE'
+                ? 'bg-emerald-400 animate-pulse'
+                : networkStatus === 'SSE_FALLBACK'
+                ? 'bg-amber-400'
+                : 'bg-cyan-400 animate-ping'
             }`}
           />
           <span className="text-slate-300 font-mono">
-            {networkStatus === 'connected' ? 'MESH LIVE' : 'SYNCING'}
+            {networkStatus === 'APPSYNC_LIVE'
+              ? 'APPSYNC WS'
+              : networkStatus === 'SSE_FALLBACK'
+              ? 'SSE FALLBACK'
+              : 'CONNECTING'}
           </span>
         </div>
+      </div>
+
+      {/* Unified Compact Cloud Services Status Pill Bar */}
+      <div className="flex items-center justify-between px-3 py-1 bg-slate-950/90 border-b border-slate-800/60 text-[9px] font-mono text-slate-400 z-20">
+        <span className="flex items-center gap-1">
+          <span className="w-1 h-1 rounded-full bg-emerald-400" />
+          Nova/Polly: {engineStatus?.source === 'aws-live' ? 'LIVE' : 'AUTO'}
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-1 h-1 rounded-full bg-emerald-400" />
+          Location+DDB: LIVE
+        </span>
+        <span className="flex items-center gap-1">
+          <span className={`w-1 h-1 rounded-full ${networkStatus === 'APPSYNC_LIVE' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+          AppSync: {networkStatus === 'APPSYNC_LIVE' ? 'LIVE' : 'SSE'}
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-1 h-1 rounded-full bg-emerald-400" />
+          SNS: {snsReceiptId ? 'SENT' : 'READY'}
+        </span>
       </div>
 
       {/* Dispatched Responder Alert Confirmation Banner (Streaming from Dashboard) */}
@@ -370,8 +423,10 @@ export default function MobileShell() {
           onTriggerStealth={handleTriggerStealth}
           onTriggerEscalation={handleTriggerEscalation}
           onTriggerPhoneDrop={handleTriggerPhoneDrop}
+          onTriggerSnsSos={handleTriggerSnsSos}
           onResetDemo={handleResetDemo}
           isCallActive={isCallActive}
+          snsReceiptId={snsReceiptId}
           onSpeechRecognized={(transcript) => {
             setSpeechSnippet(transcript);
             // If call is active and user is talking, trigger ambient turn

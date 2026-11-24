@@ -9,7 +9,7 @@ import {
   PersistedIncident,
 } from '@/types/sentinel';
 import { PATROLLING_RESPONDERS } from '@/lib/mockData';
-import { realtimeMeshAdapter } from '@/lib/aws/realtimeMeshAdapter';
+import { realtimeMeshAdapter, MeshTransportStatus } from '@/lib/aws/realtimeMeshAdapter';
 import IncidentFeed from './IncidentFeed';
 import {
   Shield,
@@ -38,7 +38,7 @@ export default function DashboardShell() {
   const [recentEvents, setRecentEvents] = useState<SentinelEvent[]>([]);
   const [dispatchedResponder, setDispatchedResponder] = useState<ResponderInfo | null>(null);
   const [selectedResponder, setSelectedResponder] = useState<PatrollingResponder | null>(null);
-  const [meshStatus, setMeshStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+  const [meshStatus, setMeshStatus] = useState<MeshTransportStatus>('connecting');
   const [persistedIncidents, setPersistedIncidents] = useState<PersistedIncident[]>([]);
   const [respondersList, setRespondersList] = useState<PatrollingResponder[]>(PATROLLING_RESPONDERS);
   const [cloudSource, setCloudSource] = useState<string>('connecting');
@@ -132,6 +132,17 @@ export default function DashboardShell() {
         ) {
           setActiveIncident(event);
           playAlertSound(event.threatLevel === 'CRITICAL' ? 980 : 720, 'square');
+        } else if (event.type === 'SOS_FALLBACK_SENT') {
+          // Merge snsMessageId onto active incident cleanly without wiping fields
+          setActiveIncident((prev) => {
+            if (!prev) return event;
+            return {
+              ...prev,
+              snsMessageId: event.snsMessageId || prev.snsMessageId,
+              notes: event.notes || prev.notes,
+            };
+          });
+          playAlertSound(480, 'sine');
         }
 
         // Re-fetch persisted history to reflect DynamoDB state
@@ -206,18 +217,22 @@ export default function DashboardShell() {
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs">
             <span
               className={`w-2 h-2 rounded-full ${
-                meshStatus === 'connected'
+                meshStatus === 'APPSYNC_LIVE'
                   ? 'bg-emerald-400 animate-pulse'
+                  : meshStatus === 'SSE_FALLBACK'
+                  ? 'bg-amber-400 animate-pulse'
                   : meshStatus === 'connecting'
-                  ? 'bg-amber-400 animate-ping'
+                  ? 'bg-cyan-400 animate-ping'
                   : 'bg-rose-500'
               }`}
             />
             <span className="font-mono text-slate-300">
-              {meshStatus === 'connected'
-                ? 'LIVE MESH CONNECTED'
+              {meshStatus === 'APPSYNC_LIVE'
+                ? 'AWS APPSYNC LIVE'
+                : meshStatus === 'SSE_FALLBACK'
+                ? 'LOCAL SSE FALLBACK'
                 : meshStatus === 'connecting'
-                ? 'RECONNECTING MESH...'
+                ? 'CONNECTING MESH...'
                 : 'DISCONNECTED'}
             </span>
           </div>

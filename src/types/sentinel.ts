@@ -3,7 +3,8 @@ export type IncidentEventType =
   | 'THREAT_ESCALATED'
   | 'PHONE_DROP_DETECTED'
   | 'RESPONDER_DISPATCHED'
-  | 'INCIDENT_RESET';
+  | 'INCIDENT_RESET'
+  | 'SOS_FALLBACK_SENT';
 
 export type ThreatLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -97,7 +98,9 @@ export interface ResponderInfo {
 }
 
 export interface SentinelEvent {
-  id: string;
+  id: string; // compatibility alias (maps to eventId or incidentId)
+  eventId: string;
+  incidentId: string;
   type: IncidentEventType;
   timestamp: number;
   location: Coordinates;
@@ -107,6 +110,7 @@ export interface SentinelEvent {
   responder?: ResponderInfo;
   audioBufferPreview?: number[];
   notes?: string;
+  snsMessageId?: string;
 }
 
 export interface DispatchAck {
@@ -135,6 +139,7 @@ export interface PersistedIncident {
   transcript?: string;
   detectedCue?: string;
   dispatchedResponder?: ResponderInfo;
+  snsMessageId?: string;
   createdAt: string;
   updatedAt: string;
 }

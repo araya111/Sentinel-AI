@@ -30,8 +30,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   - **Amazon DynamoDB**: Table `sentinel-ai-incidents` (`pk: S` HASH, `sk: S` RANGE, PAY_PER_REQUEST billing).
   - Seed items: `pk: "SAFE_HAVEN"` (`HAVEN#1..3`), `pk: "RESPONDER"` (`RESP#1..3`).
   - Incidents: `pk: "INCIDENT"` (`sk: "INC#<incidentId>"`). Deep-merging state updates for `ACTIVE`, `DISPATCHED`, and `RESOLVED` states with reserved keyword aliasing.
-- **Real-Time Mesh Sync (Phase 4)**: **AWS AppSync Events** (managed WebSocket pub/sub) + **Amazon SNS** SMS fallback.
-- **Hosting**: **AWS Amplify**.
+- **Real-Time Mesh Sync (Phase 4 Live)**:
+  - **AWS AppSync Events**: Managed WebSocket pub/sub API `sentinel-ai-events`, channel `/sentinel/live`, with native `aws-appsync-event-ws` subprotocol client adapter and automatic SSE fallback.
+  - **Amazon SNS SOS Fallback**: Topic `sentinel-ai-sos-fallback` publishing SMS-grade beacon payloads with live incident coordinates and Google Maps routing link.
+- **Hosting (Phase 4 Live SSR Prep)**:
+  - **AWS Amplify Hosting**: Least-privilege compute role `sentinel-ai-amplify-compute-role` granting Bedrock, Polly, GeoRoutes, DynamoDB, SNS, and CloudWatch Logs permissions. Configured via `amplify.yml` for Next.js 16 SSR on Node 22 (`WEB_COMPUTE`).
 
 ## 3. Architecture Rule
 - All UI components MUST call `src/lib/aws/*` adapters — never import AWS SDKs directly into React components.

@@ -8,7 +8,7 @@ import {
 import { SafeHaven, PatrollingResponder, PersistedIncident } from '@/types/sentinel';
 import { SAFE_HAVENS, PATROLLING_RESPONDERS } from '@/lib/mockData';
 
-const region = process.env.AWS_REGION || 'us-east-1';
+const region = process.env.APP_AWS_REGION || process.env.AWS_REGION || 'us-east-1';
 const tableName = process.env.DYNAMODB_TABLE_NAME || 'sentinel-ai-incidents';
 
 // Server-only DynamoDB Document Client (uses AWS_PROFILE / default credential chain)
@@ -136,6 +136,7 @@ export const dynamoStore = {
         transcript: mergedTranscript,
         detectedCue: patch.detectedCue || existing?.detectedCue || 'None',
         dispatchedResponder: patch.dispatchedResponder || existing?.dispatchedResponder,
+        snsMessageId: patch.snsMessageId || existing?.snsMessageId,
         createdAt: existing?.createdAt || now,
         updatedAt: now,
       };

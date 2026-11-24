@@ -181,6 +181,19 @@ export default function IncidentFeed({
                   </p>
                 </div>
               )}
+
+              {/* Amazon SNS SOS Fallback Receipt */}
+              {activeIncident.snsMessageId && (
+                <div className="p-2 rounded-lg bg-emerald-950/40 border border-emerald-700/60 flex items-center justify-between text-[11px] font-mono">
+                  <div className="flex items-center gap-1.5 text-emerald-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="font-semibold">Amazon SNS SOS Receipt:</span>
+                  </div>
+                  <span className="text-emerald-200 text-[10px] truncate max-w-[180px]" title={activeIncident.snsMessageId}>
+                    ID: {activeIncident.snsMessageId}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* 10-Second Rolling Audio Buffer Visualizer */}
