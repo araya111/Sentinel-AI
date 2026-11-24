@@ -6,7 +6,6 @@ import {
   SAFE_HAVENS,
   PATROLLING_RESPONDERS,
 } from '@/lib/mockData';
-import { awsConfig } from './config';
 
 export interface ILocationAdapter {
   getMapStyleUrl(): string;
@@ -14,6 +13,12 @@ export interface ILocationAdapter {
   getRoutes(): { standard: RouteOption; brightest: RouteOption };
   getSafeHavens(): SafeHaven[];
   getPatrollingResponders(): PatrollingResponder[];
+  fetchLiveRoutes(): Promise<{
+    routes: RouteOption[];
+    safeHavens: SafeHaven[];
+    source: string;
+    fallbackReason?: string;
+  }>;
   createCircleGeoJSON(
     center: [number, number],
     radiusInMeters: number,
@@ -23,19 +28,19 @@ export interface ILocationAdapter {
 
 class AmazonLocationV2Adapter implements ILocationAdapter {
   public getMapStyleUrl(): string {
-    if (awsConfig.useMockAws || !awsConfig.location.apiKey) {
-      // Free open vector dark tile style (no API key required)
-      return 'https://tiles.openfreemap.org/styles/dark';
+    const isMock = process.env.NEXT_PUBLIC_USE_MOCK_AWS === 'true';
+    const apiKey = process.env.NEXT_PUBLIC_AMAZON_LOCATION_API_KEY;
+    const region = process.env.NEXT_PUBLIC_AMAZON_LOCATION_REGION || 'us-east-1';
+
+    if (!isMock && apiKey) {
+      // Official Amazon Location Service V2 Standard Dark descriptor
+      return `https://maps.geo.${region}.amazonaws.com/v2/styles/Standard/descriptor?key=${apiKey}&color-scheme=Dark`;
     }
 
-    // Official Amazon Location Service V2 Standard Descriptor endpoint
-    return `https://maps.geo.${awsConfig.location.region}.amazonaws.com/v2/styles/Standard/descriptor?key=${awsConfig.location.apiKey}&color-scheme=Dark`;
+    // Free open vector dark tile fallback
+    return 'https://tiles.openfreemap.org/styles/dark';
   }
 
-  /**
-   * Ultra-resilient offline vector grid style JSON.
-   * Ensures the map always renders with zero tile-server network dependency if external tiles fail.
-   */
   public getFallbackStyle(): StyleSpecification {
     return {
       version: 8,
@@ -68,9 +73,35 @@ class AmazonLocationV2Adapter implements ILocationAdapter {
     return PATROLLING_RESPONDERS;
   }
 
-  /**
-   * Generates a 64-vertex GeoJSON circle polygon around [lng, lat] for the 500m mesh radius ring.
-   */
+  public async fetchLiveRoutes(): Promise<{
+    routes: RouteOption[];
+    safeHavens: SafeHaven[];
+    source: string;
+    fallbackReason?: string;
+  }> {
+    try {
+      const res = await fetch('/api/routes');
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          routes: data.routes || [BRIGHTEST_ROUTE, STANDARD_ROUTE],
+          safeHavens: data.safeHavens || SAFE_HAVENS,
+          source: data.source || 'mock-fallback',
+          fallbackReason: data.fallbackReason,
+        };
+      }
+    } catch (err) {
+      console.warn('[locationAdapter] fetchLiveRoutes error:', err);
+    }
+
+    return {
+      routes: [BRIGHTEST_ROUTE, STANDARD_ROUTE],
+      safeHavens: SAFE_HAVENS,
+      source: 'mock-fallback',
+      fallbackReason: 'Network/server unavailable',
+    };
+  }
+
   public createCircleGeoJSON(
     center: [number, number],
     radiusInMeters: number,
@@ -79,7 +110,6 @@ class AmazonLocationV2Adapter implements ILocationAdapter {
     const coords: [number, number][] = [];
     const [centerLng, centerLat] = center;
 
-    // Convert meters to approximate coordinate deltas (WGS84)
     const earthRadius = 6378137;
     const dLat = (radiusInMeters / earthRadius) * (180 / Math.PI);
     const dLng = dLat / Math.cos((centerLat * Math.PI) / 180);

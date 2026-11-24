@@ -6,6 +6,7 @@ import {
   getActiveIncident,
 } from '@/lib/eventBus';
 import { SentinelEvent, IncidentEventType } from '@/types/sentinel';
+import { dynamoStore } from '@/lib/aws/dynamoStore';
 
 export async function GET(request: NextRequest) {
   const signal = request.signal;
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
       id: body.id || `evt_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
       type: body.type,
       timestamp: body.timestamp || Date.now(),
-      location: body.location || { lat: 37.8722, lng: -122.2598 },
+      location: body.location || { lat: 37.8702, lng: -122.2589 },
       threatLevel: body.threatLevel || 'MEDIUM',
       triggerSource: body.triggerSource || 'MANUAL',
       transcriptSnippet: body.transcriptSnippet,
@@ -94,9 +95,47 @@ export async function POST(request: NextRequest) {
       notes: body.notes,
     };
 
+    // Step 1: Sub-10ms synchronous SSE broadcast so real-time stage dual-screen is instant
     broadcastSSE(event);
 
-    return NextResponse.json({ ok: true, event });
+    // Step 2: Asynchronously persist to DynamoDB table sentinel-ai-incidents
+    let persistedToDynamo = false;
+    let dynamoError: string | undefined;
+
+    try {
+      const incidentId = event.id.replace(/^evt_/, '');
+      if (
+        event.type === 'STEALTH_TRIGGERED' ||
+        event.type === 'THREAT_ESCALATED' ||
+        event.type === 'PHONE_DROP_DETECTED'
+      ) {
+        await dynamoStore.mergeAndUpsertIncident(incidentId, {
+          status: 'ACTIVE',
+          threatLevel: event.threatLevel,
+          triggerSource: event.triggerSource,
+          location: event.location,
+          transcript: event.transcriptSnippet,
+          detectedCue: event.notes || event.triggerSource,
+        });
+        persistedToDynamo = true;
+      } else if (event.type === 'RESPONDER_DISPATCHED') {
+        await dynamoStore.mergeAndUpsertIncident(incidentId, {
+          status: 'DISPATCHED',
+          dispatchedResponder: event.responder,
+        });
+        persistedToDynamo = true;
+      } else if (event.type === 'INCIDENT_RESET') {
+        await dynamoStore.mergeAndUpsertIncident(incidentId, {
+          status: 'RESOLVED',
+        });
+        persistedToDynamo = true;
+      }
+    } catch (dErr) {
+      dynamoError = (dErr as Error).message;
+      console.warn('[POST /api/events] DynamoDB persistence warning:', dynamoError);
+    }
+
+    return NextResponse.json({ ok: true, event, persistedToDynamo, dynamoError });
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: (err as Error).message },

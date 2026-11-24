@@ -163,8 +163,8 @@ export default function MobileShell() {
                 ? 'AI_AUDIO_ESCALATION'
                 : 'STEALTH_PHRASE',
             location: {
-              lat: VICTIM_INITIAL_COORDS[1],
-              lng: VICTIM_INITIAL_COORDS[0],
+              lat: VICTIM_INITIAL_COORDS.lat,
+              lng: VICTIM_INITIAL_COORDS.lng,
             },
             transcriptSnippet: data.spokenReply,
             notes: `Threat detected by Bedrock (${data.modelUsed || 'Nova 2'}). Cue: ${data.detectedCue}`,
@@ -222,7 +222,7 @@ export default function MobileShell() {
       type: 'STEALTH_TRIGGERED',
       threatLevel: 'LOW',
       triggerSource: 'STEALTH_PHRASE',
-      location: { lat: VICTIM_INITIAL_COORDS[1], lng: VICTIM_INITIAL_COORDS[0] },
+      location: { lat: VICTIM_INITIAL_COORDS.lat, lng: VICTIM_INITIAL_COORDS.lng },
       transcriptSnippet: speechSnippet || 'blue keys on the table',
       notes: 'Cover call initiated with Maya (Roommate). Calm navigation reassurance active.',
     });
@@ -245,7 +245,7 @@ export default function MobileShell() {
       type: 'PHONE_DROP_DETECTED',
       threatLevel: 'CRITICAL',
       triggerSource: 'ACCELEROMETER_DROP',
-      location: { lat: VICTIM_INITIAL_COORDS[1], lng: VICTIM_INITIAL_COORDS[0] },
+      location: { lat: VICTIM_INITIAL_COORDS.lat, lng: VICTIM_INITIAL_COORDS.lng },
       notes: 'Accelerometer freefall/impact detected! Immediate SOS mesh alert broadcasted.',
     });
   }, []);

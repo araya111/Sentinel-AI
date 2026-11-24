@@ -6,7 +6,9 @@ import {
   SentinelEvent,
   PatrollingResponder,
   ResponderInfo,
+  PersistedIncident,
 } from '@/types/sentinel';
+import { PATROLLING_RESPONDERS } from '@/lib/mockData';
 import { realtimeMeshAdapter } from '@/lib/aws/realtimeMeshAdapter';
 import IncidentFeed from './IncidentFeed';
 import {
@@ -17,6 +19,7 @@ import {
   Activity,
   AlertTriangle,
   RotateCcw,
+  Database,
 } from 'lucide-react';
 
 // Dynamic import with SSR false for MapLibre map component
@@ -36,7 +39,34 @@ export default function DashboardShell() {
   const [dispatchedResponder, setDispatchedResponder] = useState<ResponderInfo | null>(null);
   const [selectedResponder, setSelectedResponder] = useState<PatrollingResponder | null>(null);
   const [meshStatus, setMeshStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+  const [persistedIncidents, setPersistedIncidents] = useState<PersistedIncident[]>([]);
+  const [respondersList, setRespondersList] = useState<PatrollingResponder[]>(PATROLLING_RESPONDERS);
+  const [cloudSource, setCloudSource] = useState<string>('connecting');
   const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // Hydrate incidents and responders from DynamoDB via /api/incidents
+  const fetchPersistedIncidents = useCallback(async () => {
+    try {
+      const res = await fetch('/api/incidents');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.incidents)) {
+        setPersistedIncidents(data.incidents);
+      }
+      if (Array.isArray(data.responders) && data.responders.length > 0) {
+        setRespondersList(data.responders);
+      }
+      if (data.source) {
+        setCloudSource(data.source);
+      }
+    } catch (err) {
+      console.warn('[DashboardShell] Failed to hydrate incidents from DynamoDB:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPersistedIncidents();
+  }, [fetchPersistedIncidents]);
 
   // Play tactical alert ping tone via Web Audio API (browser safe, 0 external assets)
   const playAlertSound = useCallback((frequency = 880, type: OscillatorType = 'sine') => {
@@ -103,6 +133,9 @@ export default function DashboardShell() {
           setActiveIncident(event);
           playAlertSound(event.threatLevel === 'CRITICAL' ? 980 : 720, 'square');
         }
+
+        // Re-fetch persisted history to reflect DynamoDB state
+        fetchPersistedIncidents();
       },
       (status) => {
         setMeshStatus(status);
@@ -112,20 +145,22 @@ export default function DashboardShell() {
     return () => {
       unsubscribe();
     };
-  }, [playAlertSound]);
+  }, [playAlertSound, fetchPersistedIncidents]);
 
   const handleDispatch = useCallback(async (responder: PatrollingResponder) => {
     const ackEvent = await realtimeMeshAdapter.dispatchResponder(responder);
     if (ackEvent.responder) {
       setDispatchedResponder(ackEvent.responder);
     }
-  }, []);
+    fetchPersistedIncidents();
+  }, [fetchPersistedIncidents]);
 
   const handleReset = useCallback(async () => {
     setActiveIncident(null);
     setDispatchedResponder(null);
     await realtimeMeshAdapter.resetDemo();
-  }, []);
+    fetchPersistedIncidents();
+  }, [fetchPersistedIncidents]);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#050811] text-slate-100">
@@ -150,8 +185,24 @@ export default function DashboardShell() {
           </div>
         </div>
 
-        {/* Mesh pub/sub status pill */}
+        {/* Mesh pub/sub and Cloud Status badges */}
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs">
+            <Database className="w-3.5 h-3.5 text-cyan-400" />
+            <span
+              className={`w-2 h-2 rounded-full ${
+                cloudSource === 'aws-live'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : 'bg-amber-400'
+              }`}
+            />
+            <span className="font-mono text-slate-300">
+              {cloudSource === 'aws-live'
+                ? 'AWS LIVE • Location V2 + DynamoDB'
+                : 'MOCK FALLBACK • Offline'}
+            </span>
+          </div>
+
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs">
             <span
               className={`w-2 h-2 rounded-full ${
@@ -192,6 +243,7 @@ export default function DashboardShell() {
             activeIncident={activeIncident}
             onSelectResponder={setSelectedResponder}
             selectedResponderId={selectedResponder?.id}
+            respondersList={respondersList}
           />
         </section>
 
@@ -205,6 +257,9 @@ export default function DashboardShell() {
             onResetIncident={handleReset}
             selectedResponderId={selectedResponder?.id}
             onSelectResponder={setSelectedResponder}
+            persistedIncidents={persistedIncidents}
+            cloudSource={cloudSource}
+            respondersList={respondersList}
           />
         </section>
       </main>

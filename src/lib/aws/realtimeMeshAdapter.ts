@@ -26,8 +26,8 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
       type: partialEvent.type,
       timestamp: partialEvent.timestamp || Date.now(),
       location: partialEvent.location || {
-        lat: VICTIM_INITIAL_COORDS[1],
-        lng: VICTIM_INITIAL_COORDS[0],
+        lat: VICTIM_INITIAL_COORDS.lat,
+        lng: VICTIM_INITIAL_COORDS.lng,
       },
       threatLevel: partialEvent.threatLevel || 'MEDIUM',
       triggerSource: partialEvent.triggerSource || 'MANUAL',

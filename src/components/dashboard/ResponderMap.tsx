@@ -1,91 +1,64 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Map, Marker, LngLatBounds, ErrorEvent, GeoJSONSource } from 'maplibre-gl';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Map, Marker, ErrorEvent, GeoJSONSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { SentinelEvent, PatrollingResponder } from '@/types/sentinel';
 import { locationAdapter } from '@/lib/aws/locationAdapter';
-import { PATROLLING_RESPONDERS, VICTIM_INITIAL_COORDS } from '@/lib/mockData';
-import { Shield, Radio, Car, UserCheck, Coffee } from 'lucide-react';
+import { VICTIM_INITIAL_COORDS } from '@/lib/mockData';
 
 interface ResponderMapProps {
   activeIncident: SentinelEvent | null;
   onSelectResponder?: (responder: PatrollingResponder) => void;
   selectedResponderId?: string | null;
+  respondersList?: PatrollingResponder[];
 }
 
 export default function ResponderMap({
   activeIncident,
   onSelectResponder,
   selectedResponderId,
+  respondersList,
 }: ResponderMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
+  const mapReadyRef = useRef(false);
   const respondersMarkersRef = useRef<Marker[]>([]);
   const victimMarkerRef = useRef<Marker | null>(null);
-  const [mapReady, setMapReady] = useState(false);
 
-  const responders = locationAdapter.getPatrollingResponders();
+  const responders = respondersList || locationAdapter.getPatrollingResponders();
 
-  // Initialize Tactical MapLibre Map
-  useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+  // Idempotent map synchronization helper
+  const syncMapData = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
 
-    let isSubscribed = true;
-    const styleUrl = locationAdapter.getMapStyleUrl();
+    const victimCenter: [number, number] = activeIncident
+      ? [activeIncident.location.lng, activeIncident.location.lat]
+      : [-122.2589, 37.871];
 
-    const map = new Map({
-      container: mapContainerRef.current,
-      style: styleUrl,
-      center: [-122.2595, 37.8728],
-      zoom: 15.0,
-      pitch: 42,
-      bearing: -20,
-      attributionControl: false,
-    });
+    const circleGeoJSON = locationAdapter.createCircleGeoJSON(victimCenter, 500);
 
-    mapRef.current = map;
-
-    // Fallback if tile servers are offline or blocked
-    map.on('error', (e: ErrorEvent) => {
-      if (e && e.error && e.error.message && isSubscribed) {
-        console.warn('[ResponderMap] Remote tile error intercepted. Using fallback grid style.');
-        try {
-          map.setStyle(locationAdapter.getFallbackStyle());
-        } catch {
-          // ignore
-        }
-      }
-    });
-
-    map.on('load', () => {
-      if (!isSubscribed) return;
-      setMapReady(true);
-
-      // Add 500m mesh radius circle source & layer
-      const victimCenter: [number, number] = activeIncident
-        ? [activeIncident.location.lng, activeIncident.location.lat]
-        : VICTIM_INITIAL_COORDS;
-
-      const circleGeoJSON = locationAdapter.createCircleGeoJSON(victimCenter, 500);
-
+    // 1. Sync 500m mesh radius circle source & layer
+    const source = map.getSource('mesh-radius-circle-source') as GeoJSONSource | undefined;
+    if (source) {
+      source.setData(circleGeoJSON);
+    } else {
       map.addSource('mesh-radius-circle-source', {
         type: 'geojson',
         data: circleGeoJSON,
       });
 
-      // Mesh radius polygon fill
       map.addLayer({
         id: 'mesh-radius-circle-fill',
         type: 'fill',
         source: 'mesh-radius-circle-source',
         paint: {
           'fill-color': activeIncident ? '#ef4444' : '#06b6d4',
-          'fill-opacity': activeIncident ? 0.15 : 0.08,
+          'fill-opacity': activeIncident ? 0.16 : 0.08,
         },
       });
 
-      // Mesh radius outline
       map.addLayer({
         id: 'mesh-radius-circle-outline',
         type: 'line',
@@ -96,75 +69,41 @@ export default function ResponderMap({
           'line-dasharray': [3, 2],
         },
       });
-    });
+    }
 
-    return () => {
-      isSubscribed = false;
-      respondersMarkersRef.current.forEach((m) => m.remove());
-      respondersMarkersRef.current = [];
-      if (victimMarkerRef.current) victimMarkerRef.current.remove();
-      map.remove();
-      mapRef.current = null;
-    };
-  }, []);
+    if (map.getLayer('mesh-radius-circle-fill')) {
+      map.setPaintProperty(
+        'mesh-radius-circle-fill',
+        'fill-color',
+        activeIncident ? '#ef4444' : '#06b6d4'
+      );
+      map.setPaintProperty(
+        'mesh-radius-circle-fill',
+        'fill-opacity',
+        activeIncident ? 0.16 : 0.08
+      );
+    }
 
-  // Update Mesh Circle & Fly to Incident when active incident triggers
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
+    if (map.getLayer('mesh-radius-circle-outline')) {
+      map.setPaintProperty(
+        'mesh-radius-circle-outline',
+        'line-color',
+        activeIncident ? '#f43f5e' : '#22d3ee'
+      );
+    }
 
+    // 2. Camera flyTo on incident trigger
     if (activeIncident) {
-      const center: [number, number] = [
-        activeIncident.location.lng,
-        activeIncident.location.lat,
-      ];
-      const newCircle = locationAdapter.createCircleGeoJSON(center, 500);
-
-      const source = map.getSource('mesh-radius-circle-source') as GeoJSONSource | undefined;
-      if (source) {
-        source.setData(newCircle);
-      }
-
-      if (map.getLayer('mesh-radius-circle-fill')) {
-        map.setPaintProperty('mesh-radius-circle-fill', 'fill-color', '#ef4444');
-        map.setPaintProperty('mesh-radius-circle-fill', 'fill-opacity', 0.18);
-      }
-      if (map.getLayer('mesh-radius-circle-outline')) {
-        map.setPaintProperty('mesh-radius-circle-outline', 'line-color', '#f43f5e');
-      }
-
-      // Smooth camera flyTo victim coordinates
       map.flyTo({
-        center,
+        center: victimCenter,
         zoom: 15.6,
         pitch: 45,
         bearing: -15,
         speed: 1.2,
       });
-    } else {
-      // Revert to calm idle mesh state
-      const idleCenter = VICTIM_INITIAL_COORDS;
-      const idleCircle = locationAdapter.createCircleGeoJSON(idleCenter, 500);
-      const source = map.getSource('mesh-radius-circle-source') as GeoJSONSource | undefined;
-      if (source) {
-        source.setData(idleCircle);
-      }
-      if (map.getLayer('mesh-radius-circle-fill')) {
-        map.setPaintProperty('mesh-radius-circle-fill', 'fill-color', '#06b6d4');
-        map.setPaintProperty('mesh-radius-circle-fill', 'fill-opacity', 0.08);
-      }
-      if (map.getLayer('mesh-radius-circle-outline')) {
-        map.setPaintProperty('mesh-radius-circle-outline', 'line-color', '#22d3ee');
-      }
     }
-  }, [activeIncident, mapReady]);
 
-  // Render Victim Beacon & Patrolling Responder Markers
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-
-    // Responders Markers
+    // 3. Clear and re-render Responder Markers
     respondersMarkersRef.current.forEach((m) => m.remove());
     respondersMarkersRef.current = [];
 
@@ -197,14 +136,18 @@ export default function ResponderMap({
         onSelectResponder?.(responder);
       });
 
+      const respLngLat: [number, number] = [
+        responder.lng ?? responder.coordinates[0],
+        responder.lat ?? responder.coordinates[1],
+      ];
       const marker = new Marker({ element: el })
-        .setLngLat(responder.coordinates)
+        .setLngLat(respLngLat)
         .addTo(map);
 
       respondersMarkersRef.current.push(marker);
     });
 
-    // Victim Beacon Marker
+    // 4. Victim Beacon Marker
     if (victimMarkerRef.current) {
       victimMarkerRef.current.remove();
       victimMarkerRef.current = null;
@@ -225,7 +168,62 @@ export default function ResponderMap({
         .setLngLat([activeIncident.location.lng, activeIncident.location.lat])
         .addTo(map);
     }
-  }, [mapReady, responders, activeIncident, selectedResponderId, onSelectResponder]);
+  }, [activeIncident, responders, selectedResponderId, onSelectResponder]);
+
+  // Initialize MapLibre Map with validateStyle: false
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    let isSubscribed = true;
+    const styleUrl = locationAdapter.getMapStyleUrl();
+
+    const map = new Map({
+      container: mapContainerRef.current,
+      style: styleUrl,
+      center: [-122.2589, 37.871],
+      zoom: 15.0,
+      pitch: 42,
+      bearing: -20,
+      attributionControl: false,
+      validateStyle: false,
+    });
+
+    mapRef.current = map;
+
+    map.on('error', (e: ErrorEvent) => {
+      if (e && e.error && e.error.message && isSubscribed) {
+        console.warn('[ResponderMap] Remote tile warning intercepted. Using fallback grid style.');
+        try {
+          map.setStyle(locationAdapter.getFallbackStyle());
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    // Track mapReadyRef inside map.once('load')
+    map.once('load', () => {
+      if (!isSubscribed) return;
+      mapReadyRef.current = true;
+      syncMapData();
+    });
+
+    return () => {
+      isSubscribed = false;
+      mapReadyRef.current = false;
+      respondersMarkersRef.current.forEach((m) => m.remove());
+      respondersMarkersRef.current = [];
+      if (victimMarkerRef.current) victimMarkerRef.current.remove();
+      map.remove();
+      mapRef.current = null;
+    };
+  }, [syncMapData]);
+
+  // Reactive sync when activeIncident or responders change
+  useEffect(() => {
+    if (!mapReadyRef.current) return;
+    syncMapData();
+  }, [activeIncident, responders, selectedResponderId, syncMapData]);
 
   return (
     <div className="relative w-full h-full min-h-[460px] bg-[#070b14] rounded-2xl overflow-hidden border border-slate-800 shadow-2xl">
@@ -244,7 +242,7 @@ export default function ResponderMap({
             {activeIncident ? 'TACTICAL INCIDENT BEACON' : 'CAMPUS MESH COVERAGE (500M)'}
           </span>
           <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
-            3 Responders Active
+            {responders.length} Responders Active
           </span>
         </div>
       </div>

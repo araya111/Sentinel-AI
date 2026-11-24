@@ -1,27 +1,51 @@
-import { RouteOption, SafeHaven, PatrollingResponder } from '@/types/sentinel';
+import {
+  RouteOption,
+  SafeHaven,
+  PatrollingResponder,
+  Coordinates,
+  toLngLat,
+  toLatLng,
+} from '@/types/sentinel';
 
-// Campus Reference Coordinates (UC Berkeley / Telegraph to North Gate Corridor)
-export const CAMPUS_ORIGIN: [number, number] = [-122.2585, 37.8688]; // [lng, lat]
-export const CAMPUS_DESTINATION: [number, number] = [-122.2612, 37.8762]; // [lng, lat]
-export const VICTIM_INITIAL_COORDS: [number, number] = [-122.2598, 37.8722]; // [lng, lat]
+export { toLngLat, toLatLng };
+
+// Canonical Street-Routable Campus Corridor (UC Berkeley South to North Campus)
+// Origin: Telegraph Ave & Dwight Way (Mapped pedestrian sidewalk)
+export const CAMPUS_ORIGIN: Coordinates = { lat: 37.8652, lng: -122.2587 };
+// Destination: Euclid Ave & Hearst Ave / North Gate
+export const CAMPUS_DESTINATION: Coordinates = { lat: 37.8756, lng: -122.2601 };
+// Initial Victim Coordinate on corridor
+export const VICTIM_INITIAL_COORDS: Coordinates = { lat: 37.8702, lng: -122.2589 };
 
 export const STANDARD_ROUTE: RouteOption = {
   id: 'standard',
-  name: 'Standard Direct Route',
-  summary: 'Shortest path via Sather Lane & Eucalyptus Grove',
+  name: 'Standard Direct Shortcut',
+  summary: 'Shortest unlit shortcut through poorly lit alleyways & grove',
   lightingScore: 42,
+  safetyScore: 38,
   durationMinutes: 11,
   distanceMeters: 920,
   safeHavensCount: 0,
   isRecommended: false,
   coordinates: [
-    [-122.2585, 37.8688],
-    [-122.2588, 37.8701],
-    [-122.2592, 37.8715],
-    [-122.2599, 37.8728],
-    [-122.2604, 37.8744],
-    [-122.2612, 37.8762],
+    [-122.2587, 37.8652],
+    [-122.2588, 37.8675],
+    [-122.2591, 37.8701],
+    [-122.2596, 37.8724],
+    [-122.2600, 37.8742],
+    [-122.2601, 37.8756],
   ],
+  geometry: {
+    type: 'LineString',
+    coordinates: [
+      [-122.2587, 37.8652],
+      [-122.2588, 37.8675],
+      [-122.2591, 37.8701],
+      [-122.2596, 37.8724],
+      [-122.2600, 37.8742],
+      [-122.2601, 37.8756],
+    ],
+  },
 };
 
 export const BRIGHTEST_ROUTE: RouteOption = {
@@ -29,19 +53,32 @@ export const BRIGHTEST_ROUTE: RouteOption = {
   name: 'Brightest Protected Route',
   summary: 'LED-illuminated arterial corridor passing 3 verified 24/7 Safe Havens',
   lightingScore: 94,
+  safetyScore: 96,
   durationMinutes: 13,
   distanceMeters: 1140,
   safeHavensCount: 3,
   isRecommended: true,
   coordinates: [
-    [-122.2585, 37.8688],
-    [-122.2576, 37.8694],
-    [-122.2574, 37.8708],
-    [-122.2575, 37.8724],
-    [-122.2582, 37.8739],
-    [-122.2595, 37.8751],
-    [-122.2612, 37.8762],
+    [-122.2587, 37.8652],
+    [-122.2575, 37.8672],
+    [-122.2574, 37.8698],
+    [-122.2575, 37.8722],
+    [-122.2580, 37.8740],
+    [-122.2592, 37.8752],
+    [-122.2601, 37.8756],
   ],
+  geometry: {
+    type: 'LineString',
+    coordinates: [
+      [-122.2587, 37.8652],
+      [-122.2575, 37.8672],
+      [-122.2574, 37.8698],
+      [-122.2575, 37.8722],
+      [-122.2580, 37.8740],
+      [-122.2592, 37.8752],
+      [-122.2601, 37.8756],
+    ],
+  },
 };
 
 export const SAFE_HAVENS: SafeHaven[] = [
@@ -49,37 +86,49 @@ export const SAFE_HAVENS: SafeHaven[] = [
     id: 'haven-pharmacy',
     name: '24/7 Campus Pharmacy',
     category: 'pharmacy',
-    address: '2350 Telegraph Ave, Ste 101',
-    coordinates: [-122.2575, 37.8708],
+    address: '2350 Telegraph Ave',
+    coordinates: [-122.2574, 37.8698],
+    lat: 37.8698,
+    lng: -122.2574,
     is24Seven: true,
+    open24x7: true,
     verified: true,
     phone: '+1 (510) 642-1000',
     description: 'Brightly lit retail haven with security vestibule and direct 911 dispatch button.',
     distanceMeters: 140,
+    lightingScore: 95,
   },
   {
     id: 'haven-cafe',
     name: 'NightOwl Cafe & Student Study',
     category: 'cafe',
     address: '2490 Bancroft Way',
-    coordinates: [-122.2578, 37.8731],
+    coordinates: [-122.2575, 37.8722],
+    lat: 37.8722,
+    lng: -122.2575,
     is24Seven: true,
+    open24x7: true,
     verified: true,
     phone: '+1 (510) 642-2000',
     description: 'Continuous student presence, CCTV monitoring, and certified safe haven partner.',
     distanceMeters: 310,
+    lightingScore: 92,
   },
   {
     id: 'haven-security',
     name: 'North Gate Security Booth',
     category: 'security_post',
     address: 'Hearst Ave & Euclid Gate',
-    coordinates: [-122.2608, 37.8758],
+    coordinates: [-122.2601, 37.8756],
+    lat: 37.8756,
+    lng: -122.2601,
     is24Seven: true,
+    open24x7: true,
     verified: true,
     phone: '+1 (510) 642-6765',
     description: 'Stationary university police kiosk staffed 24/7 with emergency beacon lights.',
     distanceMeters: 490,
+    lightingScore: 98,
   },
 ];
 
@@ -89,6 +138,8 @@ export const PATROLLING_RESPONDERS: PatrollingResponder[] = [
     name: 'Campus Security Unit 04',
     role: 'Patrol Vehicle (Mobile Patrol)',
     coordinates: [-122.2618, 37.8734],
+    lat: 37.8734,
+    lng: -122.2618,
     etaSeconds: 75,
     etaDisplay: '1m 15s',
     status: 'patrolling',
@@ -99,6 +150,8 @@ export const PATROLLING_RESPONDERS: PatrollingResponder[] = [
     name: 'Peer Safety Volunteer — Rohan',
     role: 'Foot Escort & Certified First Responder',
     coordinates: [-122.2589, 37.8712],
+    lat: 37.8712,
+    lng: -122.2589,
     etaSeconds: 100,
     etaDisplay: '1m 40s',
     status: 'patrolling',
@@ -108,7 +161,9 @@ export const PATROLLING_RESPONDERS: PatrollingResponder[] = [
     id: 'resp-haven-cafe',
     name: 'Safe Haven — NightOwl Staff Escort',
     role: 'Stationary Responder & Safe Haven Marshall',
-    coordinates: [-122.2578, 37.8731],
+    coordinates: [-122.2575, 37.8722],
+    lat: 37.8722,
+    lng: -122.2575,
     etaSeconds: 115,
     etaDisplay: '1m 55s',
     status: 'available',

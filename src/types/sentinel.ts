@@ -13,16 +13,50 @@ export type TriggerSource =
   | 'ACCELEROMETER_DROP'
   | 'MANUAL';
 
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Universal helper guaranteeing [lng, lat] GeoJSON format.
+ */
+export function toLngLat(
+  coord: Coordinates | [number, number]
+): [number, number] {
+  if (Array.isArray(coord)) {
+    return coord;
+  }
+  return [coord.lng, coord.lat];
+}
+
+/**
+ * Universal helper guaranteeing { lat, lng } object format.
+ */
+export function toLatLng(
+  coord: Coordinates | [number, number]
+): Coordinates {
+  if (Array.isArray(coord)) {
+    return { lat: coord[1], lng: coord[0] };
+  }
+  return coord;
+}
+
 export interface RouteOption {
   id: 'standard' | 'brightest';
   name: string;
   summary: string;
   lightingScore: number; // 0 - 100
+  safetyScore?: number; // 0 - 100
   durationMinutes: number;
   distanceMeters: number;
   safeHavensCount: number;
   isRecommended: boolean;
   coordinates: [number, number][]; // [lng, lat] GeoJSON format
+  geometry?: {
+    type: 'LineString';
+    coordinates: [number, number][];
+  };
 }
 
 export interface SafeHaven {
@@ -31,11 +65,15 @@ export interface SafeHaven {
   category: 'pharmacy' | 'cafe' | 'security_post' | 'station';
   address: string;
   coordinates: [number, number]; // [lng, lat]
+  lat?: number;
+  lng?: number;
   is24Seven: boolean;
+  open24x7?: boolean;
   verified: boolean;
   phone: string;
   description: string;
   distanceMeters: number;
+  lightingScore?: number;
 }
 
 export interface PatrollingResponder {
@@ -43,6 +81,8 @@ export interface PatrollingResponder {
   name: string;
   role: string;
   coordinates: [number, number]; // [lng, lat]
+  lat?: number;
+  lng?: number;
   etaSeconds: number;
   etaDisplay: string;
   status: 'patrolling' | 'dispatched' | 'available';
@@ -60,10 +100,7 @@ export interface SentinelEvent {
   id: string;
   type: IncidentEventType;
   timestamp: number;
-  location: {
-    lat: number;
-    lng: number;
-  };
+  location: Coordinates;
   threatLevel: ThreatLevel;
   triggerSource: TriggerSource;
   transcriptSnippet?: string;
@@ -85,4 +122,19 @@ export interface ActiveIncidentState {
   latestEvent: SentinelEvent | null;
   history: SentinelEvent[];
   dispatchedResponder: ResponderInfo | null;
+}
+
+export interface PersistedIncident {
+  pk: string; // "INCIDENT"
+  sk: string; // "INC#<id>"
+  incidentId: string;
+  status: 'ACTIVE' | 'DISPATCHED' | 'RESOLVED';
+  threatLevel: ThreatLevel;
+  triggerSource: TriggerSource;
+  location: Coordinates;
+  transcript?: string;
+  detectedCue?: string;
+  dispatchedResponder?: ResponderInfo;
+  createdAt: string;
+  updatedAt: string;
 }

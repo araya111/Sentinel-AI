@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Map, Marker, Popup, LngLatBounds, ErrorEvent } from 'maplibre-gl';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Map, Marker, Popup, LngLatBounds, ErrorEvent, GeoJSONSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { RouteOption, SafeHaven } from '@/types/sentinel';
 import { locationAdapter } from '@/lib/aws/locationAdapter';
-import { ShieldCheck, MapPin, Sparkles, AlertTriangle, Clock, Eye } from 'lucide-react';
+import { ShieldCheck, Sparkles, AlertTriangle, Clock } from 'lucide-react';
 
 interface SafetyMapProps {
   selectedRouteId: 'brightest' | 'standard';
@@ -22,60 +22,58 @@ export default function SafetyMap({
 }: SafetyMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
+  const mapReadyRef = useRef(false);
   const markersRef = useRef<Marker[]>([]);
   const popupRef = useRef<Popup | null>(null);
-  const [mapLoaded, setMapLoaded] = useState(false);
 
-  const { standard: standardRoute, brightest: brightestRoute } = locationAdapter.getRoutes();
-  const safeHavens = locationAdapter.getSafeHavens();
+  const [routes, setRoutes] = useState<{ standard: RouteOption; brightest: RouteOption }>(
+    locationAdapter.getRoutes()
+  );
+  const [safeHavens, setSafeHavens] = useState<SafeHaven[]>(locationAdapter.getSafeHavens());
+  const [routingSource, setRoutingSource] = useState<string>('initializing');
 
-  // Initialize MapLibre Map with React 19 Strict Mode safe cleanup
+  // Fetch live Amazon Location V2 Routes on mount
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
-
-    let isSubscribed = true;
-    const styleUrl = locationAdapter.getMapStyleUrl();
-
-    const map = new Map({
-      container: mapContainerRef.current,
-      style: styleUrl,
-      center: [-122.2595, 37.8725],
-      zoom: 15.2,
-      pitch: 35,
-      bearing: -15,
-      attributionControl: false,
-    });
-
-    mapRef.current = map;
-
-    // Resilient fallback if remote tiles fail or are blocked
-    map.on('error', (e: ErrorEvent) => {
-      // Check if tile or style source failed
-      if (e && e.error && e.error.message && isSubscribed) {
-        console.warn('[SafetyMap] Tile error intercepted. Applying offline tactical grid style.');
-        try {
-          map.setStyle(locationAdapter.getFallbackStyle());
-        } catch {
-          // ignore
-        }
+    let active = true;
+    locationAdapter.fetchLiveRoutes().then((data) => {
+      if (!active) return;
+      const std = data.routes.find((r) => r.id === 'standard') || routes.standard;
+      const bri = data.routes.find((r) => r.id === 'brightest') || routes.brightest;
+      setRoutes({ standard: std, brightest: bri });
+      if (data.safeHavens && data.safeHavens.length > 0) {
+        setSafeHavens(data.safeHavens);
       }
+      setRoutingSource(data.source);
     });
+    return () => {
+      active = false;
+    };
+  }, []);
 
-    map.on('load', () => {
-      if (!isSubscribed) return;
-      setMapLoaded(true);
+  const { standard: standardRoute, brightest: brightestRoute } = routes;
 
-      // Add Standard Route Source & Layers
+  // Idempotent map synchronization helper
+  const syncMapData = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+
+    // 1. Update / Add Standard Route Source & Layer
+    const stdSource = map.getSource('route-standard-source') as GeoJSONSource | undefined;
+    const stdGeoJSON: GeoJSON.Feature<GeoJSON.LineString> = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: standardRoute.coordinates,
+      },
+    };
+
+    if (stdSource) {
+      stdSource.setData(stdGeoJSON);
+    } else {
       map.addSource('route-standard-source', {
         type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates: standardRoute.coordinates,
-          },
-        },
+        data: stdGeoJSON,
       });
 
       map.addLayer({
@@ -88,26 +86,32 @@ export default function SafetyMap({
         },
         paint: {
           'line-color': '#f59e0b',
-          'line-width': 4,
-          'line-opacity': selectedRouteId === 'standard' ? 0.95 : 0.35,
+          'line-width': selectedRouteId === 'standard' ? 5 : 3,
+          'line-opacity': selectedRouteId === 'standard' ? 0.95 : 0.3,
           'line-dasharray': [2, 2],
         },
       });
+    }
 
-      // Add Brightest Route Source & Layers (Glow Casing + Core Line)
+    // 2. Update / Add Brightest Route Source & Layers (Glow + Core)
+    const briSource = map.getSource('route-brightest-source') as GeoJSONSource | undefined;
+    const briGeoJSON: GeoJSON.Feature<GeoJSON.LineString> = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: brightestRoute.coordinates,
+      },
+    };
+
+    if (briSource) {
+      briSource.setData(briGeoJSON);
+    } else {
       map.addSource('route-brightest-source', {
         type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates: brightestRoute.coordinates,
-          },
-        },
+        data: briGeoJSON,
       });
 
-      // Outer glow layer
       map.addLayer({
         id: 'route-brightest-glow',
         type: 'line',
@@ -119,12 +123,11 @@ export default function SafetyMap({
         paint: {
           'line-color': '#06b6d4',
           'line-width': 10,
-          'line-opacity': selectedRouteId === 'brightest' ? 0.5 : 0.15,
+          'line-opacity': selectedRouteId === 'brightest' ? 0.55 : 0.15,
           'line-blur': 4,
         },
       });
 
-      // Inner glowing line
       map.addLayer({
         id: 'route-brightest-core',
         type: 'line',
@@ -135,36 +138,13 @@ export default function SafetyMap({
         },
         paint: {
           'line-color': '#10b981',
-          'line-width': 5,
-          'line-opacity': selectedRouteId === 'brightest' ? 1.0 : 0.35,
+          'line-width': selectedRouteId === 'brightest' ? 6 : 3,
+          'line-opacity': selectedRouteId === 'brightest' ? 1.0 : 0.3,
         },
       });
+    }
 
-      // Fit bounds to the active route
-      const activeCoords =
-        selectedRouteId === 'brightest' ? brightestRoute.coordinates : standardRoute.coordinates;
-      const bounds = activeCoords.reduce(
-        (b, coord) => b.extend(coord),
-        new LngLatBounds(activeCoords[0], activeCoords[0])
-      );
-      map.fitBounds(bounds, { padding: 45, maxZoom: 16.5, duration: 1000 });
-    });
-
-    return () => {
-      isSubscribed = false;
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
-      if (popupRef.current) popupRef.current.remove();
-      map.remove();
-      mapRef.current = null;
-    };
-  }, []);
-
-  // Update line appearance when selected route changes
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapLoaded) return;
-
+    // Update layer styles if layers already exist
     if (map.getLayer('route-standard-line')) {
       map.setPaintProperty(
         'route-standard-line',
@@ -199,22 +179,7 @@ export default function SafetyMap({
       );
     }
 
-    // Auto-frame route
-    const activeCoords =
-      selectedRouteId === 'brightest' ? brightestRoute.coordinates : standardRoute.coordinates;
-    const bounds = activeCoords.reduce(
-      (b, coord) => b.extend(coord),
-      new LngLatBounds(activeCoords[0], activeCoords[0])
-    );
-    map.fitBounds(bounds, { padding: 50, duration: 800 });
-  }, [selectedRouteId, mapLoaded]);
-
-  // Render Safe Haven & Waypoint Markers
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapLoaded) return;
-
-    // Clear old markers
+    // 3. Clear and re-add Markers
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
@@ -249,7 +214,7 @@ export default function SafetyMap({
       .addTo(map);
     markersRef.current.push(destMarker);
 
-    // Safe Haven Markers (Only displayed or prominently active along Brightest route)
+    // Safe Haven Markers
     safeHavens.forEach((haven) => {
       const el = document.createElement('div');
       el.className = 'cursor-pointer group';
@@ -265,12 +230,82 @@ export default function SafetyMap({
         onSelectSafeHaven(haven);
       });
 
+      const havenLngLat: [number, number] = [
+        haven.lng ?? haven.coordinates[0],
+        haven.lat ?? haven.coordinates[1],
+      ];
       const havenMarker = new Marker({ element: el })
-        .setLngLat(haven.coordinates)
+        .setLngLat(havenLngLat)
         .addTo(map);
       markersRef.current.push(havenMarker);
     });
-  }, [mapLoaded]);
+
+    // 4. Auto-frame active route
+    const activeCoords =
+      selectedRouteId === 'brightest' ? brightestRoute.coordinates : standardRoute.coordinates;
+    if (activeCoords && activeCoords.length > 0) {
+      const bounds = activeCoords.reduce(
+        (b, coord) => b.extend(coord),
+        new LngLatBounds(activeCoords[0], activeCoords[0])
+      );
+      map.fitBounds(bounds, { padding: 45, maxZoom: 16.5, duration: 800 });
+    }
+  }, [brightestRoute, standardRoute, safeHavens, selectedRouteId, onSelectSafeHaven]);
+
+  // Initialize MapLibre Map with validateStyle: false
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    let isSubscribed = true;
+    const styleUrl = locationAdapter.getMapStyleUrl();
+
+    const map = new Map({
+      container: mapContainerRef.current,
+      style: styleUrl,
+      center: [-122.2589, 37.871],
+      zoom: 15.2,
+      pitch: 35,
+      bearing: -15,
+      attributionControl: false,
+      validateStyle: false,
+    });
+
+    mapRef.current = map;
+
+    map.on('error', (e: ErrorEvent) => {
+      if (e && e.error && e.error.message && isSubscribed) {
+        console.warn('[SafetyMap] Tile warning intercepted. Applying fallback grid style.');
+        try {
+          map.setStyle(locationAdapter.getFallbackStyle());
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    // Track mapReadyRef inside map.once('load')
+    map.once('load', () => {
+      if (!isSubscribed) return;
+      mapReadyRef.current = true;
+      syncMapData();
+    });
+
+    return () => {
+      isSubscribed = false;
+      mapReadyRef.current = false;
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+      if (popupRef.current) popupRef.current.remove();
+      map.remove();
+      mapRef.current = null;
+    };
+  }, [syncMapData]);
+
+  // Reactive sync when route selection or data updates
+  useEffect(() => {
+    if (!mapReadyRef.current) return;
+    syncMapData();
+  }, [selectedRouteId, routes, safeHavens, syncMapData]);
 
   return (
     <div className="relative w-full h-full min-h-[380px] bg-[#070b14] overflow-hidden rounded-xl border border-slate-800">
@@ -285,8 +320,14 @@ export default function SafetyMap({
               <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
               Proactive Route Intelligence
             </div>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950/70 border border-cyan-800/50 text-cyan-300">
-              Location V2
+            <span
+              className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${
+                routingSource === 'aws-live'
+                  ? 'bg-emerald-950/80 border border-emerald-500/80 text-emerald-300'
+                  : 'bg-cyan-950/70 border border-cyan-800/50 text-cyan-300'
+              }`}
+            >
+              {routingSource === 'aws-live' ? 'Location V2 Live' : 'Location V2'}
             </span>
           </div>
 
@@ -312,7 +353,9 @@ export default function SafetyMap({
               </div>
               <div className="mt-1 flex items-center justify-between text-[11px] text-slate-300">
                 <span>{brightestRoute.durationMinutes} min</span>
-                <span className="text-[10px] text-emerald-400">3 Safe Havens</span>
+                <span className="text-[10px] text-emerald-400">
+                  {brightestRoute.safeHavensCount || 3} Safe Havens
+                </span>
               </div>
             </button>
 
@@ -337,7 +380,7 @@ export default function SafetyMap({
               </div>
               <div className="mt-1 flex items-center justify-between text-[11px] text-slate-300">
                 <span>{standardRoute.durationMinutes} min</span>
-                <span className="text-[10px] text-rose-400">0 Havens</span>
+                <span className="text-[10px] text-rose-400">Direct</span>
               </div>
             </button>
           </div>

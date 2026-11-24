@@ -17,19 +17,25 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   - Keep `Date.now()`, `new Date()`, `Math.random()`, and `crypto.randomUUID()` strictly inside `'use client'` components, event callbacks, or request-time API handlers (after reading `request` / `request.signal`), never in prerendered Server Component bodies.
   - Zero `any` type casts and zero `@ts-ignore`.
 
-## 2. Target AWS Architecture & Phase 2 Invariants
+## 2. Target AWS Architecture & Phase 2/3 Invariants
 - **Authentication**: Isolated CLI profile `AWS_PROFILE=sentinel-ai` configured via `aws login` (`AWS_SDK_LOAD_CONFIG=1`). No blank `AWS_ACCESS_KEY_ID=` or `AWS_SECRET_ACCESS_KEY=` keys.
 - **Generative Voice Deterrent (Phase 2 Live)**:
   - **Amazon Bedrock `ConverseCommand`**: Amazon Nova 2 Lite (`us.amazon.nova-2-lite-v1:0`) primary, with automatic 3-model cascade to Nova Lite (`us.amazon.nova-lite-v1:0`) and Nova Micro (`us.amazon.nova-micro-v1:0`). Forced structured tool call (`deterrent_response`) with strict conversation sanitizer (alternating user/assistant turns, 8 turn cap).
   - **Amazon Polly**: Neural voice engine (`Ruth`) synthesizing live deterrent audio, with automatic fallback to Standard engine.
   - **Stage-Safe Failover**: Seamless fallback to realistic mock deterrent if AWS credentials are unconfigured or remote services are unavailable, ensuring zero stage crashes.
-- **Mapping & Routing (Phase 3)**: **Amazon Location Service V2** via API key (`https://maps.geo.{region}.amazonaws.com/v2/styles/Standard/descriptor?key={apiKey}&color-scheme=Dark`) + `@aws-sdk/client-geo-routes`.
-- **Real-Time Mesh Sync (Phase 4)**: **AWS AppSync Events** (managed WebSocket pub/sub) + **Amazon DynamoDB** + **Amazon SNS** SMS fallback.
+- **Mapping & Routing (Phase 3 Live)**:
+  - **Amazon Location Service V2**: Map API key `sentinel-ai-maps-key` restricted to `geo-maps:GetTile` and `geo-maps:GetStaticMap` (`https://maps.geo.{region}.amazonaws.com/v2/styles/Standard/descriptor?key={apiKey}&color-scheme=Dark`).
+  - **Server-Side Routing**: `@aws-sdk/client-geo-routes` (`CalculateRoutesCommand`) calculating parallel pedestrian routes (Fastest Standard Shortcut vs. Safety-Weighted Brightest Corridor passing verified Safe Havens).
+- **Persistence (Phase 3 Live)**:
+  - **Amazon DynamoDB**: Table `sentinel-ai-incidents` (`pk: S` HASH, `sk: S` RANGE, PAY_PER_REQUEST billing).
+  - Seed items: `pk: "SAFE_HAVEN"` (`HAVEN#1..3`), `pk: "RESPONDER"` (`RESP#1..3`).
+  - Incidents: `pk: "INCIDENT"` (`sk: "INC#<incidentId>"`). Deep-merging state updates for `ACTIVE`, `DISPATCHED`, and `RESOLVED` states with reserved keyword aliasing.
+- **Real-Time Mesh Sync (Phase 4)**: **AWS AppSync Events** (managed WebSocket pub/sub) + **Amazon SNS** SMS fallback.
 - **Hosting**: **AWS Amplify**.
 
 ## 3. Architecture Rule
 - All UI components MUST call `src/lib/aws/*` adapters — never import AWS SDKs directly into React components.
-- Server-side routes instantiate `BedrockRuntimeClient` and `PollyClient` without explicit credentials, delegating to the AWS default credential provider chain (`sentinel-ai` profile locally, IAM roles on Amplify).
+- Server-side routes instantiate AWS SDK clients (`BedrockRuntimeClient`, `PollyClient`, `GeoRoutesClient`, `DynamoDBClient`) without explicit credentials, delegating to the AWS default credential provider chain (`sentinel-ai` profile locally, IAM roles on Amplify).
 
 ## 4. Security Rule
 - Never hardcode AWS keys or secrets.

@@ -5,6 +5,7 @@ import {
   SentinelEvent,
   PatrollingResponder,
   ResponderInfo,
+  PersistedIncident,
 } from '@/types/sentinel';
 import { PATROLLING_RESPONDERS } from '@/lib/mockData';
 import {
@@ -15,11 +16,11 @@ import {
   Volume2,
   CheckCircle2,
   Send,
-  Clock,
   Sparkles,
-  PhoneCall,
-  Zap,
   RotateCcw,
+  Database,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 interface IncidentFeedProps {
@@ -30,6 +31,9 @@ interface IncidentFeedProps {
   onResetIncident: () => Promise<void>;
   selectedResponderId?: string | null;
   onSelectResponder?: (responder: PatrollingResponder) => void;
+  persistedIncidents?: PersistedIncident[];
+  cloudSource?: string;
+  respondersList?: PatrollingResponder[];
 }
 
 export default function IncidentFeed({
@@ -40,10 +44,16 @@ export default function IncidentFeed({
   onResetIncident,
   selectedResponderId,
   onSelectResponder,
+  persistedIncidents = [],
+  cloudSource = 'aws-live',
+  respondersList,
 }: IncidentFeedProps) {
   const [isPlayingBuffer, setIsPlayingBuffer] = useState(false);
   const [bufferPlayhead, setBufferPlayhead] = useState(0);
   const [isDispatching, setIsDispatching] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const availableResponders = respondersList || PATROLLING_RESPONDERS;
 
   // Simulated 10-second acoustic buffer playback loop
   useEffect(() => {
@@ -76,7 +86,6 @@ export default function IncidentFeed({
     }
   };
 
-  // Synthetic 10s audio buffer amplitudes
   const bufferAmplitudes = [
     24, 32, 18, 45, 62, 85, 95, 90, 75, 40,
     35, 20, 50, 78, 92, 100, 88, 64, 30, 22,
@@ -96,7 +105,7 @@ export default function IncidentFeed({
               INCIDENT COMMAND TELEMETRY
             </h2>
             <p className="text-[11px] text-slate-400 font-mono">
-              Live Meshpub/sub • Amazon AppSync Events
+              Live Mesh • DynamoDB Persistence
             </p>
           </div>
         </div>
@@ -202,7 +211,6 @@ export default function IncidentFeed({
                 </button>
               </div>
 
-              {/* Waveform graphic bars */}
               <div className="h-10 w-full flex items-end justify-between gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800/80">
                 {bufferAmplitudes.map((amp, idx) => {
                   const isCurrent = Math.floor((bufferPlayhead / 10) * bufferAmplitudes.length) >= idx;
@@ -233,7 +241,7 @@ export default function IncidentFeed({
               Mesh Nominal & Listening
             </h3>
             <p className="text-[11px] text-slate-400 mt-1 max-w-[280px] mx-auto">
-              Zero active alarms. 3 verified campus responders are currently positioned within the 500m safety perimeter.
+              Zero active alarms. {availableResponders.length} verified campus responders are currently positioned within the 500m safety perimeter.
             </p>
           </div>
         )}
@@ -248,7 +256,7 @@ export default function IncidentFeed({
           </div>
 
           <div className="space-y-2">
-            {PATROLLING_RESPONDERS.map((responder) => {
+            {availableResponders.map((responder) => {
               const isDispatched =
                 dispatchedResponder && dispatchedResponder.id === responder.id;
               const isSelected = selectedResponderId === responder.id;
@@ -312,13 +320,82 @@ export default function IncidentFeed({
           </div>
         </div>
 
+        {/* Collapsible Incident History (DynamoDB Persistence) */}
+        <div className="pt-2 border-t border-slate-800/80">
+          <button
+            type="button"
+            onClick={() => setShowHistory(!showHistory)}
+            className="w-full flex items-center justify-between p-2 rounded-lg bg-slate-950/80 hover:bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 transition-colors"
+          >
+            <span className="flex items-center gap-1.5">
+              <Database className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Incident History (DynamoDB Persistence)</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                {persistedIncidents.length}
+              </span>
+            </span>
+            {showHistory ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+
+          {showHistory && (
+            <div className="mt-2 space-y-2 max-h-[220px] overflow-y-auto">
+              {persistedIncidents.length === 0 ? (
+                <div className="text-[11px] text-slate-500 italic p-3 text-center bg-slate-950/40 rounded-lg">
+                  No persisted incidents in DynamoDB yet. Trigger an alert to persist.
+                </div>
+              ) : (
+                persistedIncidents.map((inc) => (
+                  <div
+                    key={inc.sk}
+                    className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-cyan-300 font-semibold">
+                        {inc.incidentId}
+                      </span>
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase ${
+                          inc.status === 'ACTIVE'
+                            ? 'bg-rose-900/60 text-rose-300 border border-rose-700/50'
+                            : inc.status === 'DISPATCHED'
+                            ? 'bg-amber-900/60 text-amber-300 border border-amber-700/50'
+                            : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50'
+                        }`}
+                      >
+                        {inc.status}
+                      </span>
+                    </div>
+
+                    {inc.transcript && (
+                      <p className="text-slate-300 italic text-[10px] line-clamp-2">
+                        &ldquo;{inc.transcript}&rdquo;
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono pt-1 border-t border-slate-900">
+                      <span>{inc.threatLevel} THREAT</span>
+                      <span>
+                        {new Date(inc.updatedAt).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Live Event Timeline / Audit Trail */}
         <div className="pt-2">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
             Mesh Event Audit Trail
           </h4>
 
-          <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
+          <div className="space-y-1.5 max-h-[140px] overflow-y-auto">
             {recentEvents.length === 0 ? (
               <div className="text-[11px] text-slate-500 italic py-2 text-center">
                 Awaiting telemetry events...
