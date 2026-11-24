@@ -1,23 +1,21 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Shield,
-  ShieldAlert,
-  Radio,
-  Navigation,
   CheckCircle2,
-  AlertCircle,
   Wifi,
   Battery,
-  MapPin,
+  Navigation,
 } from 'lucide-react';
-import { RouteOption, SafeHaven, SentinelEvent, ResponderInfo } from '@/types/sentinel';
+import { SafeHaven, SentinelEvent, ResponderInfo } from '@/types/sentinel';
 import { realtimeMeshAdapter } from '@/lib/aws/realtimeMeshAdapter';
+import { deterrentVoiceAdapter } from '@/lib/aws/deterrentVoiceAdapter';
 import StealthListener from './StealthListener';
 import DeterrentCallUI from './DeterrentCallUI';
 import { VICTIM_INITIAL_COORDS } from '@/lib/mockData';
+import type { DeterrentResponse } from '@/app/api/deterrent/route';
 
 // Dynamic import with SSR false for MapLibre map component
 const SafetyMap = dynamic(() => import('./SafetyMap'), {
@@ -40,6 +38,28 @@ export default function MobileShell() {
   const [speechSnippet, setSpeechSnippet] = useState<string>('');
   const [networkStatus, setNetworkStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
 
+  // Phase 2 Live Engine States
+  const [spokenReply, setSpokenReply] = useState<string>(
+    "Hey! Just saw your location—you're about two minutes past the pharmacy, right? Keep talking to me until you hit the main gate."
+  );
+  const [detectedCue, setDetectedCue] = useState<string>('None');
+  const [isLoadingTurn, setIsLoadingTurn] = useState(false);
+  const [micSuspended, setMicSuspended] = useState(false);
+  const [engineStatus, setEngineStatus] = useState<{
+    source: 'aws-live' | 'mock-fallback';
+    modelUsed?: string;
+    latencyMs?: number;
+    fallbackReason?: string;
+  } | null>(null);
+  const [conversationHistory, setConversationHistory] = useState<
+    Array<{ role: 'user' | 'assistant'; text: string }>
+  >([]);
+
+  // Refs for race-condition guards and unified incident sync
+  const sessionIncidentIdRef = useRef<string | null>(null);
+  const requestSeqRef = useRef<number>(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Subscribe to real-time event bus (SSE)
   useEffect(() => {
     const unsubscribe = realtimeMeshAdapter.subscribe(
@@ -51,6 +71,8 @@ export default function MobileShell() {
           setIsEscalated(false);
           setDispatchedResponder(null);
           setSpeechSnippet('');
+          setConversationHistory([]);
+          sessionIncidentIdRef.current = null;
         }
       },
       (status) => {
@@ -63,11 +85,140 @@ export default function MobileShell() {
     };
   }, []);
 
-  // Action: Trigger Stealth Cover Call
+  /**
+   * Core orchestrator for Bedrock + Polly turns with race condition prevention
+   */
+  const executeDeterrentTurn = useCallback(
+    async (
+      phase: 'START_CALL' | 'AMBIENT_TURN' | 'FORCE_ESCALATE',
+      transcriptText = ''
+    ) => {
+      // Ensure single persistent incident ID for this session
+      if (!sessionIncidentIdRef.current) {
+        sessionIncidentIdRef.current = `inc_${Date.now().toString(36)}_${Math.random()
+          .toString(36)
+          .substring(2, 6)}`;
+      }
+
+      // Race Guard: Increment sequence and cancel previous in-flight requests
+      requestSeqRef.current += 1;
+      const currentSeq = requestSeqRef.current;
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const ac = new AbortController();
+      abortControllerRef.current = ac;
+
+      // Immediately stop audio & suspend mic for zero-echo gating
+      deterrentVoiceAdapter.stopAudio();
+      setMicSuspended(true);
+      setIsLoadingTurn(true);
+
+      const locationLabel =
+        selectedRouteId === 'brightest'
+          ? 'Brightest Route (Passing 24/7 Campus Pharmacy)'
+          : 'Standard Direct Route (Sather Lane)';
+
+      try {
+        const data: DeterrentResponse = await deterrentVoiceAdapter.requestDeterrentTurn(
+          {
+            phase,
+            ambientTranscript: transcriptText,
+            userLocationLabel: locationLabel,
+            history: conversationHistory,
+          },
+          ac.signal
+        );
+
+        // Discard stale response if a newer action or turn fired
+        if (currentSeq !== requestSeqRef.current) return;
+
+        setSpokenReply(data.spokenReply);
+        setDetectedCue(data.detectedCue);
+        setEngineStatus({
+          source: data.source,
+          modelUsed: data.modelUsed,
+          latencyMs: data.latencyMs,
+          fallbackReason: data.fallbackReason,
+        });
+        setIsLoadingTurn(false);
+
+        // Update conversation history
+        setConversationHistory((prev) => [
+          ...prev,
+          { role: 'user', text: transcriptText || phase },
+          { role: 'assistant', text: data.spokenReply },
+        ]);
+
+        // If Bedrock assesses a threat or escalation
+        if (data.threatDetected || phase === 'FORCE_ESCALATE') {
+          setIsEscalated(true);
+          await realtimeMeshAdapter.publishEvent({
+            id: sessionIncidentIdRef.current,
+            type: 'THREAT_ESCALATED',
+            threatLevel: data.threatLevel || 'CRITICAL',
+            triggerSource:
+              phase === 'FORCE_ESCALATE'
+                ? 'AI_AUDIO_ESCALATION'
+                : 'STEALTH_PHRASE',
+            location: {
+              lat: VICTIM_INITIAL_COORDS[1],
+              lng: VICTIM_INITIAL_COORDS[0],
+            },
+            transcriptSnippet: data.spokenReply,
+            notes: `Threat detected by Bedrock (${data.modelUsed || 'Nova 2'}). Cue: ${data.detectedCue}`,
+          });
+        }
+
+        // Resume mic 500ms after audio playback ends (Echo Gating)
+        const resumeMic = () => {
+          setTimeout(() => {
+            if (currentSeq === requestSeqRef.current) {
+              setMicSuspended(false);
+            }
+          }, 500);
+        };
+
+        // Play audio: Polly MP3 binary if available, else speech synthesis
+        if (data.audioBase64) {
+          await deterrentVoiceAdapter.playPollyAudio(
+            data.audioBase64,
+            resumeMic,
+            (err) => {
+              console.warn('[MobileShell] Polly playback error, using speech synthesis:', err);
+              deterrentVoiceAdapter.speakFallback(data.spokenReply, {
+                onEnd: resumeMic,
+              });
+            }
+          );
+        } else {
+          await deterrentVoiceAdapter.speakFallback(data.spokenReply, {
+            onEnd: resumeMic,
+          });
+        }
+      } catch (err: unknown) {
+        if ((err as { name?: string }).name === 'AbortError') {
+          return; // Expected abort on mid-sentence cutoff
+        }
+        console.error('[MobileShell] Deterrent turn error:', err);
+        if (currentSeq === requestSeqRef.current) {
+          setIsLoadingTurn(false);
+          setMicSuspended(false);
+        }
+      }
+    },
+    [conversationHistory, selectedRouteId]
+  );
+
+  // Action: Trigger Stealth Cover Call [1]
   const handleTriggerStealth = useCallback(async () => {
     setIsCallActive(true);
     setIsEscalated(false);
+
+    // Initial SSE broadcast
     await realtimeMeshAdapter.publishEvent({
+      id: sessionIncidentIdRef.current || `inc_${Date.now().toString(36)}`,
       type: 'STEALTH_TRIGGERED',
       threatLevel: 'LOW',
       triggerSource: 'STEALTH_PHRASE',
@@ -75,25 +226,22 @@ export default function MobileShell() {
       transcriptSnippet: speechSnippet || 'blue keys on the table',
       notes: 'Cover call initiated with Maya (Roommate). Calm navigation reassurance active.',
     });
-  }, [speechSnippet]);
 
-  // Action: Threat Escalation
+    // Fire Bedrock Live Turn
+    await executeDeterrentTurn('START_CALL', speechSnippet || 'blue keys on the table');
+  }, [speechSnippet, executeDeterrentTurn]);
+
+  // Action: Threat Escalation [2]
   const handleTriggerEscalation = useCallback(async () => {
     setIsCallActive(true);
     setIsEscalated(true);
-    await realtimeMeshAdapter.publishEvent({
-      type: 'THREAT_ESCALATED',
-      threatLevel: 'CRITICAL',
-      triggerSource: 'AI_AUDIO_ESCALATION',
-      location: { lat: VICTIM_INITIAL_COORDS[1], lng: VICTIM_INITIAL_COORDS[0] },
-      transcriptSnippet: speechSnippet || 'Hey who is that back off!',
-      notes: 'AI speech-to-speech deterrent escalated loudly. Real-time mesh broadcasted to Campus Security.',
-    });
-  }, [speechSnippet]);
+    await executeDeterrentTurn('FORCE_ESCALATE', speechSnippet || 'Hey who is that back off!');
+  }, [speechSnippet, executeDeterrentTurn]);
 
-  // Action: Phone Drop Detection
+  // Action: Phone Drop Detection [3]
   const handleTriggerPhoneDrop = useCallback(async () => {
     await realtimeMeshAdapter.publishEvent({
+      id: sessionIncidentIdRef.current || `inc_${Date.now().toString(36)}`,
       type: 'PHONE_DROP_DETECTED',
       threatLevel: 'CRITICAL',
       triggerSource: 'ACCELEROMETER_DROP',
@@ -102,12 +250,19 @@ export default function MobileShell() {
     });
   }, []);
 
-  // Action: Reset Demo
+  // Action: Reset Demo [0]
   const handleResetDemo = useCallback(async () => {
+    requestSeqRef.current += 1;
+    abortControllerRef.current?.abort();
+    deterrentVoiceAdapter.stopAudio();
     setIsCallActive(false);
     setIsEscalated(false);
     setDispatchedResponder(null);
     setSpeechSnippet('');
+    setConversationHistory([]);
+    sessionIncidentIdRef.current = null;
+    setMicSuspended(false);
+    setIsLoadingTurn(false);
     await realtimeMeshAdapter.resetDemo();
   }, []);
 
@@ -139,7 +294,7 @@ export default function MobileShell() {
             <div className="flex items-center gap-1.5">
               <h1 className="text-xs font-bold tracking-tight text-white">SENTINEL AI</h1>
               <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-900/50 text-cyan-300 border border-cyan-700/50">
-                PWA v1.0
+                PWA v2.0
               </span>
             </div>
             <p className="text-[10px] text-slate-400">UC Berkeley Campus Corridor</p>
@@ -193,8 +348,16 @@ export default function MobileShell() {
           <DeterrentCallUI
             isEscalated={isEscalated}
             onEscalate={handleTriggerEscalation}
-            onEndCall={() => setIsCallActive(false)}
+            onEndCall={() => {
+              deterrentVoiceAdapter.stopAudio();
+              setIsCallActive(false);
+              setMicSuspended(false);
+            }}
             liveTranscriptSnippet={speechSnippet}
+            spokenReply={spokenReply}
+            detectedCue={detectedCue}
+            engineStatus={engineStatus}
+            isLoadingTurn={isLoadingTurn}
           />
         )}
       </div>
@@ -209,7 +372,15 @@ export default function MobileShell() {
           onTriggerPhoneDrop={handleTriggerPhoneDrop}
           onResetDemo={handleResetDemo}
           isCallActive={isCallActive}
-          onSpeechRecognized={setSpeechSnippet}
+          onSpeechRecognized={(transcript) => {
+            setSpeechSnippet(transcript);
+            // If call is active and user is talking, trigger ambient turn
+            if (isCallActive && transcript.length > 5 && !micSuspended) {
+              executeDeterrentTurn('AMBIENT_TURN', transcript);
+            }
+          }}
+          micSuspended={micSuspended}
+          engineStatus={engineStatus}
         />
       </div>
     </div>

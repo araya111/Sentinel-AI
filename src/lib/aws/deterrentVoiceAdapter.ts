@@ -1,31 +1,67 @@
-import { VOICE_SCRIPTS } from '@/lib/mockData';
-import { awsConfig } from './config';
+import type { DeterrentRequest, DeterrentResponse } from '@/app/api/deterrent/route';
 
-export interface DeterrentVoiceOptions {
-  rate?: number;
-  pitch?: number;
-  volume?: number;
-  onStart?: () => void;
-  onEnd?: () => void;
-}
+// Minimal 44-byte silent PCM WAV data URI for browser programmatic autoplay unlock
+const SILENT_WAV_URI =
+  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
 export interface IDeterrentVoiceAdapter {
-  speak(text: string, options?: DeterrentVoiceOptions): Promise<void>;
-  cancel(): void;
+  unlockAudio(): Promise<void>;
+  stopAudio(): void;
+  playPollyAudio(
+    base64Data: string,
+    onEnded?: () => void,
+    onError?: (err: unknown) => void
+  ): Promise<void>;
+  speakFallback(
+    text: string,
+    options?: { onStart?: () => void; onEnd?: () => void }
+  ): Promise<void>;
+  requestDeterrentTurn(
+    req: DeterrentRequest,
+    signal?: AbortSignal
+  ): Promise<DeterrentResponse>;
   setMuted(muted: boolean): void;
   isMuted(): boolean;
-  isSpeaking(): boolean;
-  playCalmDeterrent(onStart?: () => void, onEnd?: () => void): Promise<void>;
-  playEscalatedDeterrent(onStart?: () => void, onEnd?: () => void): Promise<void>;
 }
 
-class BrowserSpeechDeterrentAdapter implements IDeterrentVoiceAdapter {
+class DeterrentVoiceAdapter implements IDeterrentVoiceAdapter {
+  private audioElement: HTMLAudioElement | null = null;
+  private currentObjectUrl: string | null = null;
+  private isUnlocked = false;
   private muted = false;
+
+  private getAudio(): HTMLAudioElement | null {
+    if (typeof window === 'undefined') return null;
+    if (!this.audioElement) {
+      this.audioElement = new Audio();
+      this.audioElement.preload = 'auto';
+    }
+    return this.audioElement;
+  }
+
+  /**
+   * Pre-warms programmatic audio playback during a direct user touch/click event.
+   */
+  public async unlockAudio(): Promise<void> {
+    if (this.isUnlocked || typeof window === 'undefined') return;
+    try {
+      const audio = this.getAudio();
+      if (!audio) return;
+      audio.src = SILENT_WAV_URI;
+      await audio.play();
+      audio.pause();
+      audio.currentTime = 0;
+      this.isUnlocked = true;
+      console.log('[DeterrentVoiceAdapter] Programmatic audio unlocked successfully.');
+    } catch (e) {
+      console.warn('[DeterrentVoiceAdapter] Autoplay unlock note:', e);
+    }
+  }
 
   public setMuted(muted: boolean): void {
     this.muted = muted;
     if (muted) {
-      this.cancel();
+      this.stopAudio();
     }
   }
 
@@ -33,20 +69,93 @@ class BrowserSpeechDeterrentAdapter implements IDeterrentVoiceAdapter {
     return this.muted;
   }
 
-  public isSpeaking(): boolean {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      return false;
-    }
-    return window.speechSynthesis.speaking;
-  }
+  public stopAudio(): void {
+    if (typeof window === 'undefined') return;
 
-  public cancel(): void {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    // Stop persistent HTMLAudioElement
+    if (this.audioElement) {
+      try {
+        this.audioElement.pause();
+        this.audioElement.currentTime = 0;
+        this.audioElement.onended = null;
+        this.audioElement.onerror = null;
+      } catch {
+        // ignore
+      }
+    }
+
+    // Revoke old object URL to prevent memory leaks
+    if (this.currentObjectUrl) {
+      URL.revokeObjectURL(this.currentObjectUrl);
+      this.currentObjectUrl = null;
+    }
+
+    // Stop Web Speech API synthesis
+    if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
   }
 
-  public async speak(text: string, options: DeterrentVoiceOptions = {}): Promise<void> {
+  public async playPollyAudio(
+    base64Data: string,
+    onEnded?: () => void,
+    onError?: (err: unknown) => void
+  ): Promise<void> {
+    if (this.muted) {
+      onEnded?.();
+      return;
+    }
+
+    this.stopAudio();
+
+    try {
+      const audio = this.getAudio();
+      if (!audio) {
+        onEnded?.();
+        return;
+      }
+
+      // Convert base64 to binary blob
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'audio/mpeg' });
+
+      const objectUrl = URL.createObjectURL(blob);
+      this.currentObjectUrl = objectUrl;
+
+      audio.src = objectUrl;
+
+      audio.onended = () => {
+        if (this.currentObjectUrl === objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          this.currentObjectUrl = null;
+        }
+        onEnded?.();
+      };
+
+      audio.onerror = (e) => {
+        if (this.currentObjectUrl === objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          this.currentObjectUrl = null;
+        }
+        onError?.(e);
+      };
+
+      await audio.play();
+    } catch (err) {
+      console.warn('[DeterrentVoiceAdapter] Audio play failed, falling back:', err);
+      onError?.(err);
+    }
+  }
+
+  public async speakFallback(
+    text: string,
+    options: { onStart?: () => void; onEnd?: () => void } = {}
+  ): Promise<void> {
     if (this.muted) {
       options.onStart?.();
       options.onEnd?.();
@@ -54,48 +163,38 @@ class BrowserSpeechDeterrentAdapter implements IDeterrentVoiceAdapter {
     }
 
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      console.warn('[DeterrentVoiceAdapter] SpeechSynthesis is not supported in this environment.');
       options.onStart?.();
       options.onEnd?.();
       return;
     }
 
-    // Cancel any ongoing speech before starting new sentence
     window.speechSynthesis.cancel();
 
     return new Promise<void>((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = options.rate ?? 1.0;
-      utterance.pitch = options.pitch ?? 1.0;
-      utterance.volume = options.volume ?? 1.0;
+      utterance.rate = 1.05;
+      utterance.pitch = 1.0;
 
-      // Select a natural female or clear voice if available (e.g. Samantha, Google US English, etc.)
       const voices = window.speechSynthesis.getVoices();
-      const preferredVoice = voices.find(
+      const preferred = voices.find(
         (v) =>
           v.lang.startsWith('en') &&
           (v.name.includes('Female') ||
-            v.name.includes('Natural') ||
             v.name.includes('Samantha') ||
             v.name.includes('Zira') ||
-            v.name.includes('Google US English'))
+            v.name.includes('Natural'))
       ) || voices.find((v) => v.lang.startsWith('en'));
 
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-      }
+      if (preferred) utterance.voice = preferred;
 
       utterance.onstart = () => {
         options.onStart?.();
       };
-
       utterance.onend = () => {
         options.onEnd?.();
         resolve();
       };
-
-      utterance.onerror = (err) => {
-        console.warn('[DeterrentVoiceAdapter] Speech synthesis utterance error:', err);
+      utterance.onerror = () => {
         options.onEnd?.();
         resolve();
       };
@@ -104,31 +203,23 @@ class BrowserSpeechDeterrentAdapter implements IDeterrentVoiceAdapter {
     });
   }
 
-  public async playCalmDeterrent(onStart?: () => void, onEnd?: () => void): Promise<void> {
-    return this.speak(VOICE_SCRIPTS.calm, {
-      rate: 1.0,
-      pitch: 1.05,
-      volume: 1.0,
-      onStart,
-      onEnd,
+  public async requestDeterrentTurn(
+    req: DeterrentRequest,
+    signal?: AbortSignal
+  ): Promise<DeterrentResponse> {
+    const res = await fetch('/api/deterrent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
     });
-  }
 
-  public async playEscalatedDeterrent(onStart?: () => void, onEnd?: () => void): Promise<void> {
-    this.cancel(); // Mid-sentence interruption
-    return this.speak(VOICE_SCRIPTS.escalated, {
-      rate: 1.15, // slightly faster, urgent
-      pitch: 1.1,
-      volume: 1.0,
-      onStart,
-      onEnd,
-    });
+    if (!res.ok) {
+      throw new Error(`Deterrent API responded with HTTP ${res.status}`);
+    }
+
+    return (await res.json()) as DeterrentResponse;
   }
 }
 
-/**
- * Singleton instance of the deterrent voice adapter.
- * Uses Web Speech API synthesis in Phase 1 (mock mode) and provides
- * clean interface for Amazon Nova 2 Sonic / Bedrock Polly in Phases 2-4.
- */
-export const deterrentVoiceAdapter: IDeterrentVoiceAdapter = new BrowserSpeechDeterrentAdapter();
+export const deterrentVoiceAdapter: IDeterrentVoiceAdapter = new DeterrentVoiceAdapter();

@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Phone,
   PhoneOff,
   Volume2,
   VolumeX,
@@ -10,15 +9,24 @@ import {
   Radio,
   User,
   Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { deterrentVoiceAdapter } from '@/lib/aws/deterrentVoiceAdapter';
-import { VOICE_SCRIPTS } from '@/lib/mockData';
 
 interface DeterrentCallUIProps {
   isEscalated: boolean;
   onEscalate: () => void;
   onEndCall: () => void;
   liveTranscriptSnippet?: string;
+  spokenReply: string;
+  detectedCue?: string;
+  engineStatus?: {
+    source: 'aws-live' | 'mock-fallback';
+    modelUsed?: string;
+    latencyMs?: number;
+    fallbackReason?: string;
+  } | null;
+  isLoadingTurn?: boolean;
 }
 
 export default function DeterrentCallUI({
@@ -26,11 +34,13 @@ export default function DeterrentCallUI({
   onEscalate,
   onEndCall,
   liveTranscriptSnippet,
+  spokenReply,
+  detectedCue,
+  engineStatus,
+  isLoadingTurn,
 }: DeterrentCallUIProps) {
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
-  const [transcriptStream, setTranscriptStream] = useState<string>('');
-  const hasSpokenCalmRef = useRef(false);
 
   // Call duration counter
   useEffect(() => {
@@ -40,7 +50,6 @@ export default function DeterrentCallUI({
     return () => clearInterval(timer);
   }, []);
 
-  // Format call timer (MM:SS)
   const formatTimer = (secs: number) => {
     const m = Math.floor(secs / 60)
       .toString()
@@ -49,20 +58,6 @@ export default function DeterrentCallUI({
     return `${m}:${s}`;
   };
 
-  // Trigger spoken voice synthesis via deterrent voice adapter
-  useEffect(() => {
-    if (!isEscalated) {
-      if (!hasSpokenCalmRef.current) {
-        hasSpokenCalmRef.current = true;
-        setTranscriptStream(VOICE_SCRIPTS.calm);
-        deterrentVoiceAdapter.playCalmDeterrent();
-      }
-    } else {
-      setTranscriptStream(VOICE_SCRIPTS.escalated);
-      deterrentVoiceAdapter.playEscalatedDeterrent();
-    }
-  }, [isEscalated]);
-
   const toggleMute = () => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
@@ -70,7 +65,7 @@ export default function DeterrentCallUI({
   };
 
   const handleEnd = () => {
-    deterrentVoiceAdapter.cancel();
+    deterrentVoiceAdapter.stopAudio();
     onEndCall();
   };
 
@@ -102,10 +97,10 @@ export default function DeterrentCallUI({
               ? 'bg-rose-950/60 border-rose-800 text-rose-300'
               : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
           }`}
-          title="Toggle browser synthesized speech audio"
+          title="Toggle synthesized voice audio"
         >
           {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-          <span>{isMuted ? 'TTS Muted' : 'TTS Audio On'}</span>
+          <span>{isMuted ? 'Muted' : 'Audio On'}</span>
         </button>
       </div>
 
@@ -135,7 +130,7 @@ export default function DeterrentCallUI({
         </p>
 
         {/* Dynamic Waveform Visualizer */}
-        <div className="flex items-center justify-center gap-1.5 h-8 my-4">
+        <div className="flex items-center justify-center gap-1.5 h-8 my-3">
           <span className={`w-1 rounded-full bg-cyan-400 animate-wave-1 ${isEscalated ? '!bg-rose-500' : ''}`} />
           <span className={`w-1 rounded-full bg-cyan-400 animate-wave-2 ${isEscalated ? '!bg-rose-500' : ''}`} />
           <span className={`w-1 rounded-full bg-cyan-400 animate-wave-3 ${isEscalated ? '!bg-rose-500' : ''}`} />
@@ -156,11 +151,27 @@ export default function DeterrentCallUI({
           <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-700/50 text-[10px] font-mono uppercase tracking-wider">
             <span className="flex items-center gap-1 text-cyan-400">
               <Sparkles className="w-3 h-3" />
-              {isEscalated ? 'Bedrock Nova 2 Deterrent' : 'Bedrock Voice Synthesizer'}
+              {engineStatus?.source === 'aws-live'
+                ? `Bedrock + Polly (${engineStatus.modelUsed?.split('.').pop() || 'Nova'})`
+                : 'Bedrock Engine (Mock Fallback)'}
             </span>
-            <span className="text-slate-400">AWS Bedrock Mock</span>
+            {isLoadingTurn ? (
+              <span className="flex items-center gap-1 text-cyan-300">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                Thinking...
+              </span>
+            ) : engineStatus?.latencyMs ? (
+              <span className="text-slate-400">{engineStatus.latencyMs}ms</span>
+            ) : null}
           </div>
-          <p className="text-xs italic leading-relaxed">&ldquo;{transcriptStream}&rdquo;</p>
+
+          <p className="text-xs italic leading-relaxed">&ldquo;{spokenReply}&rdquo;</p>
+
+          {detectedCue && detectedCue !== 'None' && (
+            <div className="mt-2 pt-1.5 border-t border-slate-800/80 text-[10px] text-rose-300 font-mono">
+              <strong>Cue:</strong> {detectedCue}
+            </div>
+          )}
 
           {liveTranscriptSnippet && (
             <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-slate-400">

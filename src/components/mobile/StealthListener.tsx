@@ -11,8 +11,10 @@ import {
   Volume2,
   ChevronUp,
   ChevronDown,
+  Sparkles,
 } from 'lucide-react';
 import { VOICE_SCRIPTS } from '@/lib/mockData';
+import { deterrentVoiceAdapter } from '@/lib/aws/deterrentVoiceAdapter';
 
 interface StealthListenerProps {
   isArmed: boolean;
@@ -23,6 +25,13 @@ interface StealthListenerProps {
   onResetDemo: () => void;
   isCallActive: boolean;
   onSpeechRecognized: (transcript: string) => void;
+  micSuspended?: boolean;
+  engineStatus?: {
+    source: 'aws-live' | 'mock-fallback';
+    modelUsed?: string;
+    latencyMs?: number;
+    fallbackReason?: string;
+  } | null;
 }
 
 export default function StealthListener({
@@ -34,6 +43,8 @@ export default function StealthListener({
   onResetDemo,
   isCallActive,
   onSpeechRecognized,
+  micSuspended = false,
+  engineStatus,
 }: StealthListenerProps) {
   const [speechSupported, setSpeechSupported] = useState<boolean>(true);
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -41,7 +52,7 @@ export default function StealthListener({
   const [lastTranscript, setLastTranscript] = useState<string>('');
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
-  // Initialize Web Speech API & Passive Auto-Restart Loop
+  // Initialize Web Speech API
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -64,6 +75,8 @@ export default function StealthListener({
     };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      if (micSuspended) return; // Discard buffered speech during echo gate
+
       let current = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         current += event.results[i][0].transcript;
@@ -87,7 +100,6 @@ export default function StealthListener({
     };
 
     recognition.onerror = (e) => {
-      // Ignore routine 'no-speech' or 'aborted' errors; recognition will auto-restart
       if (e.error !== 'no-speech') {
         console.warn('[StealthListener] SpeechRecognition error:', e.error);
       }
@@ -95,12 +107,12 @@ export default function StealthListener({
 
     recognition.onend = () => {
       setIsListening(false);
-      // Auto-restart if still armed
-      if (isArmed && recognitionRef.current) {
+      // Auto-restart if armed and not suspended
+      if (isArmed && !micSuspended && recognitionRef.current) {
         try {
           recognition.start();
         } catch {
-          // May throw if restarting too rapidly
+          // ignore
         }
       }
     };
@@ -116,10 +128,33 @@ export default function StealthListener({
       }
       recognitionRef.current = null;
     };
-  }, [isArmed, isCallActive, onTriggerStealth, onTriggerEscalation, onSpeechRecognized]);
+  }, [isArmed, isCallActive, micSuspended, onTriggerStealth, onTriggerEscalation, onSpeechRecognized]);
 
-  // Handle Arm / Disarm Toggle
+  // Handle zero-echo mic suspension when Maya is speaking or turn is fetching
+  useEffect(() => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+
+    if (micSuspended) {
+      try {
+        recognition.abort(); // Clear any buffered speech to avoid self-echo
+      } catch {
+        // ignore
+      }
+    } else if (isArmed && !isListening) {
+      try {
+        recognition.start();
+      } catch {
+        // ignore
+      }
+    }
+  }, [micSuspended, isArmed, isListening]);
+
+  // Handle Arm / Disarm Toggle with programmatic audio pre-warming
   const handleToggle = useCallback(async () => {
+    // Programmatically unlock audio on user gesture
+    await deterrentVoiceAdapter.unlockAudio();
+
     // Unlock iOS DeviceMotionEvent permission if required
     if (
       typeof window !== 'undefined' &&
@@ -129,17 +164,16 @@ export default function StealthListener({
       try {
         await window.DeviceMotionEvent.requestPermission();
       } catch {
-        // user denied or ignored
+        // ignore
       }
     }
 
-    // Toggle arming state
     if (!isArmed) {
       onToggleArmed();
       try {
         recognitionRef.current?.start();
       } catch {
-        // ignore if already started
+        // ignore
       }
     } else {
       onToggleArmed();
@@ -161,7 +195,6 @@ export default function StealthListener({
       if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
 
       const magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-      // Sudden spike above 28 m/s² indicates impact or freefall drop
       if (magnitude > 28 && Math.abs(magnitude - lastMagnitude) > 18) {
         console.warn('[StealthListener] Hardware drop spike detected:', magnitude);
         onTriggerPhoneDrop();
@@ -228,14 +261,22 @@ export default function StealthListener({
                   : 'bg-slate-800 text-slate-400'
               }`}
             >
-              {isArmed ? <Mic className="w-4 h-4 animate-pulse" /> : <MicOff className="w-4 h-4" />}
+              {isArmed ? (
+                <Mic className={`w-4 h-4 ${micSuspended ? 'opacity-40' : 'animate-pulse'}`} />
+              ) : (
+                <MicOff className="w-4 h-4" />
+              )}
             </span>
             <div className="text-left">
               <div className="text-xs uppercase tracking-wider font-bold">
                 {isArmed ? 'Sentinel Armed & Listening' : 'Sentinel Inactive'}
               </div>
               <div className="text-[11px] text-slate-400">
-                {isArmed ? 'Zero-touch voice phrase active' : 'Tap to arm passive protection'}
+                {isArmed
+                  ? micSuspended
+                    ? 'Maya speaking (mic gated)'
+                    : 'Zero-touch voice phrase active'
+                  : 'Tap to arm passive protection'}
               </div>
             </div>
           </div>
@@ -245,11 +286,13 @@ export default function StealthListener({
               <span
                 className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
                   isArmed
-                    ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50'
+                    ? micSuspended
+                      ? 'bg-amber-950 text-amber-300 border border-amber-700/50'
+                      : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50'
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}
               >
-                {isArmed ? 'MIC ACTIVE' : 'STANDBY'}
+                {isArmed ? (micSuspended ? 'ECHO GATED' : 'MIC ACTIVE') : 'STANDBY'}
               </span>
             ) : (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800">
@@ -260,7 +303,7 @@ export default function StealthListener({
         </button>
       </div>
 
-      {/* Passive Phrase Indicator Bar (Discreet appearance) */}
+      {/* Passive Phrase Indicator Bar */}
       {isArmed && (
         <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400">
           <span className="flex items-center gap-1.5">
@@ -275,17 +318,41 @@ export default function StealthListener({
 
       {/* Stage Demo Quick Controls Pill (Collapsible) */}
       <div className="mt-1 bg-slate-950/90 border border-slate-800/90 rounded-xl overflow-hidden shadow-xl">
-        <button
-          type="button"
-          onClick={() => setDrawerOpen(!drawerOpen)}
-          className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-semibold text-slate-400 hover:text-slate-200 bg-slate-900/60 border-b border-slate-800/60 transition-colors"
-        >
-          <span className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/60">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(!drawerOpen)}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors"
+          >
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            Stage Demo Hotkeys & Injections
-          </span>
-          {drawerOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-        </button>
+            <span>Stage Demo Hotkeys</span>
+            {drawerOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Engine Status Badge */}
+          {engineStatus?.source === 'aws-live' ? (
+            <div
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-500/80 text-emerald-300 text-[9px] font-mono cursor-help"
+              title={`Live AWS: ${engineStatus.modelUsed || 'Bedrock Nova'} + Polly`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>AWS LIVE • Bedrock + Polly ({engineStatus.latencyMs}ms)</span>
+            </div>
+          ) : engineStatus?.source === 'mock-fallback' ? (
+            <div
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/90 border border-amber-600/80 text-amber-300 text-[9px] font-mono cursor-help"
+              title={engineStatus.fallbackReason || 'Stage Safe Mock Fallback'}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span>MOCK FALLBACK</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400 text-[9px] font-mono">
+              <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
+              <span>PHASE 2 READY</span>
+            </div>
+          )}
+        </div>
 
         {drawerOpen && (
           <div className="p-2.5 grid grid-cols-2 gap-2 text-[11px]">

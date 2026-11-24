@@ -72,11 +72,20 @@ export default function DashboardShell() {
     }
   }, []);
 
-  // Connect to SSE real-time event bus
+  // Connect to SSE real-time event bus with in-place incident upsert
   useEffect(() => {
     const unsubscribe = realtimeMeshAdapter.subscribe(
       (event: SentinelEvent) => {
-        setRecentEvents((prev) => [event, ...prev.slice(0, 19)]);
+        // Upsert by ID to prevent duplicate alert cards across conversational turns
+        setRecentEvents((prev) => {
+          const idx = prev.findIndex((e) => e.id === event.id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = event;
+            return next;
+          }
+          return [event, ...prev.slice(0, 19)];
+        });
 
         if (event.type === 'INCIDENT_RESET') {
           setActiveIncident(null);

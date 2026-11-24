@@ -17,15 +17,19 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   - Keep `Date.now()`, `new Date()`, `Math.random()`, and `crypto.randomUUID()` strictly inside `'use client'` components, event callbacks, or request-time API handlers (after reading `request` / `request.signal`), never in prerendered Server Component bodies.
   - Zero `any` type casts and zero `@ts-ignore`.
 
-## 2. Target AWS Architecture (Phases 2–4)
-- **Generative Voice Deterrent**: **Amazon Bedrock — Amazon Nova 2 Sonic** (`amazon.nova-2-sonic-v1:0`) for native speech-to-speech, OR **Claude Haiku 4.5** (`global.anthropic.claude-haiku-4-5-20251001-v1:0`) + Amazon Polly Neural fallback. Never use retired `claude-3-haiku`.
-- **Mapping & Routing**: **Amazon Location Service V2** via API key (`https://maps.geo.{region}.amazonaws.com/v2/styles/Standard/descriptor?key={apiKey}&color-scheme=Dark`) + `@aws-sdk/client-geo-routes`. Never use legacy V1 Map or RouteCalculator resource names.
-- **Real-Time Mesh Sync**: **AWS AppSync Events** (managed WebSocket pub/sub) + **Amazon DynamoDB** + **Amazon SNS** SMS fallback.
+## 2. Target AWS Architecture & Phase 2 Invariants
+- **Authentication**: Isolated CLI profile `AWS_PROFILE=sentinel-ai` configured via `aws login` (`AWS_SDK_LOAD_CONFIG=1`). No blank `AWS_ACCESS_KEY_ID=` or `AWS_SECRET_ACCESS_KEY=` keys.
+- **Generative Voice Deterrent (Phase 2 Live)**:
+  - **Amazon Bedrock `ConverseCommand`**: Amazon Nova 2 Lite (`us.amazon.nova-2-lite-v1:0`) primary, with automatic 3-model cascade to Nova Lite (`us.amazon.nova-lite-v1:0`) and Nova Micro (`us.amazon.nova-micro-v1:0`). Forced structured tool call (`deterrent_response`) with strict conversation sanitizer (alternating user/assistant turns, 8 turn cap).
+  - **Amazon Polly**: Neural voice engine (`Ruth`) synthesizing live deterrent audio, with automatic fallback to Standard engine.
+  - **Stage-Safe Failover**: Seamless fallback to realistic mock deterrent if AWS credentials are unconfigured or remote services are unavailable, ensuring zero stage crashes.
+- **Mapping & Routing (Phase 3)**: **Amazon Location Service V2** via API key (`https://maps.geo.{region}.amazonaws.com/v2/styles/Standard/descriptor?key={apiKey}&color-scheme=Dark`) + `@aws-sdk/client-geo-routes`.
+- **Real-Time Mesh Sync (Phase 4)**: **AWS AppSync Events** (managed WebSocket pub/sub) + **Amazon DynamoDB** + **Amazon SNS** SMS fallback.
 - **Hosting**: **AWS Amplify**.
 
 ## 3. Architecture Rule
 - All UI components MUST call `src/lib/aws/*` adapters — never import AWS SDKs directly into React components.
-- In Phase 1, `NEXT_PUBLIC_USE_MOCK_AWS=true` activates local adapters, falling back gracefully to live AWS endpoints in future phases.
+- Server-side routes instantiate `BedrockRuntimeClient` and `PollyClient` without explicit credentials, delegating to the AWS default credential provider chain (`sentinel-ai` profile locally, IAM roles on Amplify).
 
 ## 4. Security Rule
 - Never hardcode AWS keys or secrets.
