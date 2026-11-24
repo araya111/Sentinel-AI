@@ -156,21 +156,20 @@ export default function StealthListener({
 
   // Handle Arm / Disarm Toggle with programmatic audio pre-warming
   const handleToggle = useCallback(async () => {
+    // Synchronously request iOS DeviceMotionEvent permission BEFORE any await
+    try {
+      if (
+        typeof window !== 'undefined' &&
+        typeof (window as unknown as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } }).DeviceMotionEvent?.requestPermission === 'function'
+      ) {
+        (window as unknown as { DeviceMotionEvent: { requestPermission: () => Promise<string> } }).DeviceMotionEvent.requestPermission().catch(() => {});
+      }
+    } catch {
+      // User cancelled or unsupported
+    }
+
     // Programmatically unlock audio on user gesture
     await deterrentVoiceAdapter.unlockAudio();
-
-    // Unlock iOS DeviceMotionEvent permission if required
-    if (
-      typeof window !== 'undefined' &&
-      window.DeviceMotionEvent &&
-      typeof window.DeviceMotionEvent.requestPermission === 'function'
-    ) {
-      try {
-        await window.DeviceMotionEvent.requestPermission();
-      } catch {
-        // ignore
-      }
-    }
 
     if (!isArmed) {
       onToggleArmed();

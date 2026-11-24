@@ -419,7 +419,14 @@ export default function MobileShell() {
       <div className="p-3 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 z-20">
         <StealthListener
           isArmed={isArmed}
-          onToggleArmed={() => setIsArmed(!isArmed)}
+          onToggleArmed={() => {
+            try {
+              (window as unknown as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } }).DeviceMotionEvent?.requestPermission?.().catch(() => {});
+            } catch {
+              // ignore
+            }
+            setIsArmed(!isArmed);
+          }}
           onTriggerStealth={handleTriggerStealth}
           onTriggerEscalation={handleTriggerEscalation}
           onTriggerPhoneDrop={handleTriggerPhoneDrop}

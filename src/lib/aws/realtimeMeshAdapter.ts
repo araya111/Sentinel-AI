@@ -210,6 +210,7 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
     const connectAppSync = () => {
       if (isDisposed) return;
       clearTimers();
+      stopSseFallback(); // Ensure NO background SSE connection while AppSync connects or runs
 
       const realtimeDomain =
         awsConfig.appSync.realtimeDomain ||
@@ -328,12 +329,14 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
         ws.onerror = (err) => {
           if (isDisposed) return;
           console.warn('[AppSync WebSocket] Socket error:', err);
-          startSseFallback();
         };
 
         ws.onclose = () => {
           if (isDisposed) return;
-          startSseFallback();
+          // Only start SSE fallback if AppSync is completely disconnected
+          if (currentStatus !== 'APPSYNC_LIVE') {
+            startSseFallback();
+          }
 
           // Exponential backoff retry: 3s -> 6s -> 15s -> 30s
           reconnectTimer = setTimeout(() => {
