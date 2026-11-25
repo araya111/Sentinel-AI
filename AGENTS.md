@@ -44,3 +44,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Never hardcode AWS keys or secrets.
 - Never commit `.env.local` to source control.
 - Never execute billable AWS deployment commands without explicit user confirmation.
+
+
+## 5. Live Production Deployment (Phase 5)
+- **AMPLIFY_APP_ID**: `d18h813sr0ipe4`
+- **AMPLIFY_LIVE_URL**: `https://main.d18h813sr0ipe4.amplifyapp.com`
+- **AMPLIFY_BRANCH**: `main`
+- **STATUS**: `SUCCEED`
