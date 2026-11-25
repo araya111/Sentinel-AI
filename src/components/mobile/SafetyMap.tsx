@@ -12,6 +12,7 @@ interface SafetyMapProps {
   onSelectRoute: (routeId: 'brightest' | 'standard') => void;
   selectedSafeHaven: SafeHaven | null;
   onSelectSafeHaven: (haven: SafeHaven | null) => void;
+  userLocation?: { lat: number; lng: number } | null;
 }
 
 export default function SafetyMap({
@@ -19,11 +20,13 @@ export default function SafetyMap({
   onSelectRoute,
   selectedSafeHaven,
   onSelectSafeHaven,
+  userLocation,
 }: SafetyMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const mapReadyRef = useRef(false);
   const markersRef = useRef<Marker[]>([]);
+  const originMarkerRef = useRef<Marker | null>(null);
   const popupRef = useRef<Popup | null>(null);
 
   const [routes, setRoutes] = useState<{ standard: RouteOption; brightest: RouteOption }>(
@@ -51,6 +54,13 @@ export default function SafetyMap({
   }, []);
 
   const { standard: standardRoute, brightest: brightestRoute } = routes;
+
+  // Smooth live marker updates without re-centering or snapping user map view
+  useEffect(() => {
+    if (userLocation && originMarkerRef.current) {
+      originMarkerRef.current.setLngLat([userLocation.lng, userLocation.lat]);
+    }
+  }, [userLocation]);
 
   // Idempotent map synchronization helper
   const syncMapData = useCallback(() => {
@@ -195,8 +205,9 @@ export default function SafetyMap({
       </div>
     `;
     const originMarker = new Marker({ element: originEl })
-      .setLngLat(brightestRoute.coordinates[0])
+      .setLngLat(userLocation ? [userLocation.lng, userLocation.lat] : brightestRoute.coordinates[0])
       .addTo(map);
+    originMarkerRef.current = originMarker;
     markersRef.current.push(originMarker);
 
     // Destination Marker

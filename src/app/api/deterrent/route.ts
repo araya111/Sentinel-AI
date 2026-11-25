@@ -9,6 +9,9 @@ import {
   SynthesizeSpeechCommand,
   VoiceId,
 } from '@aws-sdk/client-polly';
+import { checkRateLimit, getClientIp } from '@/lib/rateLimit';
+import { sanitizeRoom } from '@/lib/room';
+import { logTelemetry } from '@/lib/telemetry';
 
 export type DeterrentRequest = {
   phase: 'START_CALL' | 'AMBIENT_TURN' | 'FORCE_ESCALATE';
@@ -140,6 +143,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: 'Malformed JSON payload' },
       { status: 400 }
+    );
+  }
+
+  const ip = getClientIp(request);
+  const rawRoom = (body as { room?: string }).room || request.nextUrl.searchParams.get('room');
+  const room = sanitizeRoom(rawRoom);
+  const isSandbox = room === 'audience-sandbox';
+
+  // Rate Limiting (Audience Cost Shield)
+  const limit = isSandbox ? 6 : 40;
+  const rateCheck = checkRateLimit({
+    key: `deterrent:${room}:${ip}`,
+    limit,
+    windowMs: 60000,
+  });
+
+  if (!rateCheck.allowed) {
+    logTelemetry({
+      route: '/api/deterrent',
+      awsService: 'Bedrock Nova + Polly',
+      source: 'rate-limited',
+      latencyMs: Date.now() - startTime,
+      room,
+      ok: false,
+      errorCode: 'RATE_LIMIT_EXCEEDED',
+    });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'Rate limit exceeded for this session. Please wait a few seconds.',
+        retryAfterSec: rateCheck.retryAfterSec,
+      },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(rateCheck.retryAfterSec) },
+      }
     );
   }
 
@@ -333,6 +373,15 @@ export async function POST(request: NextRequest) {
     source: 'aws-live',
     latencyMs: Date.now() - startTime,
   };
+
+  logTelemetry({
+    route: '/api/deterrent',
+    awsService: 'Bedrock Nova + Polly',
+    source: response.source,
+    latencyMs: response.latencyMs,
+    room,
+    ok: response.source === 'aws-live',
+  });
 
   return NextResponse.json(response);
 }

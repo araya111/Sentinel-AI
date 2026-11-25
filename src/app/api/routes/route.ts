@@ -13,6 +13,7 @@ import {
   toLngLat,
 } from '@/lib/mockData';
 import { RouteOption, SafeHaven } from '@/types/sentinel';
+import { logTelemetry } from '@/lib/telemetry';
 
 const region = process.env.APP_AWS_REGION || process.env.AWS_REGION || 'us-east-1';
 const geoRoutesClient = new GeoRoutesClient({ region });
@@ -185,12 +186,22 @@ export async function GET(request: NextRequest) {
       isRecommended: true,
     };
 
+    const latencyMs = Date.now() - startTime;
+    logTelemetry({
+      route: '/api/routes',
+      awsService: 'Amazon Location V2 GeoRoutes',
+      source: 'aws-live',
+      latencyMs,
+      room: 'global',
+      ok: true,
+    });
+
     return NextResponse.json({
       routes: [brightestResult, standardResult],
       safeHavens,
       source: 'aws-live',
       region,
-      latencyMs: Date.now() - startTime,
+      latencyMs,
     });
   } catch (err: unknown) {
     const errorMsg = (err as Error).message || String(err);

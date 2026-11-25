@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
 
 export const metadata: Metadata = {
   title: 'Sentinel AI — Proactive Navigation & Generative Deterrence',
@@ -30,6 +31,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="bg-[#060913] text-slate-100 antialiased min-h-screen selection:bg-cyan-500/30 selection:text-cyan-200">
+        <ServiceWorkerRegister />
         {children}
       </body>
     </html>

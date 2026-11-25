@@ -12,9 +12,12 @@ import {
   ChevronUp,
   ChevronDown,
   Sparkles,
+  Radio,
+  WifiOff,
+  Wifi,
 } from 'lucide-react';
 import { VOICE_SCRIPTS } from '@/lib/mockData';
-import { deterrentVoiceAdapter } from '@/lib/aws/deterrentVoiceAdapter';
+import { pcmRingBuffer } from '@/lib/audio/pcmRingBuffer';
 
 interface StealthListenerProps {
   isArmed: boolean;
@@ -23,11 +26,16 @@ interface StealthListenerProps {
   onTriggerEscalation: () => void;
   onTriggerPhoneDrop: () => void;
   onTriggerSnsSos?: () => void;
+  onAnalyzeTranscribe?: () => void;
+  onToggleOffline?: () => void;
   onResetDemo: () => void;
   isCallActive: boolean;
   onSpeechRecognized: (transcript: string) => void;
   micSuspended?: boolean;
   snsReceiptId?: string | null;
+  isOffline?: boolean;
+  isTranscribing?: boolean;
+  transcribeResult?: { transcript: string; latencyMs: number } | null;
   engineStatus?: {
     source: 'aws-live' | 'mock-fallback';
     modelUsed?: string;
@@ -43,178 +51,160 @@ export default function StealthListener({
   onTriggerEscalation,
   onTriggerPhoneDrop,
   onTriggerSnsSos,
+  onAnalyzeTranscribe,
+  onToggleOffline,
   onResetDemo,
   isCallActive,
   onSpeechRecognized,
   micSuspended = false,
   snsReceiptId,
+  isOffline = false,
+  isTranscribing = false,
+  transcribeResult,
   engineStatus,
 }: StealthListenerProps) {
   const [speechSupported, setSpeechSupported] = useState<boolean>(true);
-  const [isListening, setIsListening] = useState<boolean>(false);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(true);
-  const [lastTranscript, setLastTranscript] = useState<string>('');
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
 
-  // Initialize Web Speech API
+  // Initialize Web Speech API & Web Audio PCM ring buffer capture
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    // 1. Web Speech API
     const SpeechRecognitionAPI =
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognitionAPI) {
       setSpeechSupported(false);
-      return;
+    } else {
+      setSpeechSupported(true);
+      const recognition = new SpeechRecognitionAPI();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        if (micSuspended) return; // Discard buffered speech during echo gate
+
+        let current = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          current += event.results[i][0].transcript;
+        }
+        const lower = current.trim().toLowerCase();
+        onSpeechRecognized(lower);
+
+        // Check for zero-touch stealth activation phrase
+        if (lower.includes(VOICE_SCRIPTS.stealthPhrase) && !isCallActive) {
+          onTriggerStealth();
+        }
+
+        // Check for threat keywords during active call
+        const hasThreatKeyword = VOICE_SCRIPTS.threatKeywords.some((kw) =>
+          lower.includes(kw)
+        );
+        if (hasThreatKeyword && isCallActive) {
+          onTriggerEscalation();
+        }
+      };
+
+      recognition.onerror = () => {
+        // restart silently if armed
+        if (isArmed && !micSuspended) {
+          try {
+            recognition.start();
+          } catch {
+            // ignore
+          }
+        }
+      };
+
+      recognitionRef.current = recognition;
     }
 
-    setSpeechSupported(true);
-    const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    // 2. Continuous 16 kHz Audio Recording into pcmRingBuffer for Amazon Transcribe
+    const startPcmMic = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) return;
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        });
+        mediaStreamRef.current = stream;
 
-    recognition.onstart = () => {
-      setIsListening(true);
-    };
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new AudioCtx({ sampleRate: 16000 });
+        audioContextRef.current = ctx;
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      if (micSuspended) return; // Discard buffered speech during echo gate
+        const sourceNode = ctx.createMediaStreamSource(stream);
+        // ScriptProcessor with 4096 sample buffer size
+        const processorNode = ctx.createScriptProcessor(4096, 1, 1);
 
-      let current = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        current += event.results[i][0].transcript;
-      }
-      const lower = current.trim().toLowerCase();
-      setLastTranscript(lower);
-      onSpeechRecognized(lower);
+        processorNode.onaudioprocess = (e) => {
+          const inputData = e.inputBuffer.getChannelData(0);
+          const int16Array = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            const s = Math.max(-1, Math.min(1, inputData[i]));
+            int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          pcmRingBuffer.write(int16Array);
+        };
 
-      // Check for zero-touch stealth activation phrase
-      if (lower.includes(VOICE_SCRIPTS.stealthPhrase) && !isCallActive) {
-        onTriggerStealth();
-      }
-
-      // Check for threat keywords during active call
-      const hasThreatKeyword = VOICE_SCRIPTS.threatKeywords.some((kw) =>
-        lower.includes(kw)
-      );
-      if (hasThreatKeyword && isCallActive) {
-        onTriggerEscalation();
-      }
-    };
-
-    recognition.onerror = (e) => {
-      if (e.error !== 'no-speech') {
-        console.warn('[StealthListener] SpeechRecognition error:', e.error);
+        sourceNode.connect(processorNode);
+        processorNode.connect(ctx.destination);
+      } catch (err) {
+        console.warn('[StealthListener] Mic audio stream init note:', err);
       }
     };
 
-    recognition.onend = () => {
-      setIsListening(false);
-      // Auto-restart if armed and not suspended
-      if (isArmed && !micSuspended && recognitionRef.current) {
+    startPcmMic();
+
+    return () => {
+      if (recognitionRef.current) {
         try {
-          recognition.start();
+          recognitionRef.current.abort();
         } catch {
           // ignore
         }
       }
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      recognition.onend = null;
-      try {
-        recognition.stop();
-      } catch {
-        // ignore
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       }
-      recognitionRef.current = null;
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+      }
     };
-  }, [isArmed, isCallActive, micSuspended, onTriggerStealth, onTriggerEscalation, onSpeechRecognized]);
+  }, [isCallActive, micSuspended, onSpeechRecognized, onTriggerEscalation, onTriggerStealth]);
 
-  // Handle zero-echo mic suspension when Maya is speaking or turn is fetching
+  // Handle Arm/Disarm transitions
   useEffect(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
+    if (!recognitionRef.current) return;
 
-    if (micSuspended) {
+    if (isArmed && !micSuspended) {
       try {
-        recognition.abort(); // Clear any buffered speech to avoid self-echo
+        recognitionRef.current.start();
       } catch {
-        // ignore
-      }
-    } else if (isArmed && !isListening) {
-      try {
-        recognition.start();
-      } catch {
-        // ignore
-      }
-    }
-  }, [micSuspended, isArmed, isListening]);
-
-  // Handle Arm / Disarm Toggle with programmatic audio pre-warming
-  const handleToggle = useCallback(async () => {
-    // Synchronously request iOS DeviceMotionEvent permission BEFORE any await
-    try {
-      if (
-        typeof window !== 'undefined' &&
-        typeof (window as unknown as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } }).DeviceMotionEvent?.requestPermission === 'function'
-      ) {
-        (window as unknown as { DeviceMotionEvent: { requestPermission: () => Promise<string> } }).DeviceMotionEvent.requestPermission().catch(() => {});
-      }
-    } catch {
-      // User cancelled or unsupported
-    }
-
-    // Programmatically unlock audio on user gesture
-    await deterrentVoiceAdapter.unlockAudio();
-
-    if (!isArmed) {
-      onToggleArmed();
-      try {
-        recognitionRef.current?.start();
-      } catch {
-        // ignore
+        // already started
       }
     } else {
-      onToggleArmed();
       try {
-        recognitionRef.current?.stop();
+        recognitionRef.current.stop();
       } catch {
         // ignore
       }
     }
-  }, [isArmed, onToggleArmed]);
+  }, [isArmed, micSuspended]);
 
-  // Accelerometer Drop Listener
-  useEffect(() => {
-    if (!isArmed || typeof window === 'undefined') return;
-
-    let lastMagnitude = 0;
-    const handleMotion = (event: DeviceMotionEvent) => {
-      const acc = event.accelerationIncludingGravity || event.acceleration;
-      if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
-
-      const magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-      if (magnitude > 28 && Math.abs(magnitude - lastMagnitude) > 18) {
-        console.warn('[StealthListener] Hardware drop spike detected:', magnitude);
-        onTriggerPhoneDrop();
-      }
-      lastMagnitude = magnitude;
-    };
-
-    window.addEventListener('devicemotion', handleMotion);
-    return () => {
-      window.removeEventListener('devicemotion', handleMotion);
-    };
-  }, [isArmed, onTriggerPhoneDrop]);
-
-  // Keyboard Shortcuts: [1], [2], [3], [0] with activeElement input guard
+  // Global Stage keyboard shortcuts (1, 2, 3, 4, 6, 7, 0)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = document.activeElement;
+      const target = e.target;
       const isInput =
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
@@ -234,6 +224,12 @@ export default function StealthListener({
       } else if (e.key === '4') {
         e.preventDefault();
         onTriggerSnsSos?.();
+      } else if (e.key === '6') {
+        e.preventDefault();
+        onAnalyzeTranscribe?.();
+      } else if (e.key === '7') {
+        e.preventDefault();
+        onToggleOffline?.();
       } else if (e.key === '0') {
         e.preventDefault();
         onResetDemo();
@@ -244,7 +240,15 @@ export default function StealthListener({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [onTriggerStealth, onTriggerEscalation, onTriggerPhoneDrop, onTriggerSnsSos, onResetDemo]);
+  }, [
+    onTriggerStealth,
+    onTriggerEscalation,
+    onTriggerPhoneDrop,
+    onTriggerSnsSos,
+    onAnalyzeTranscribe,
+    onToggleOffline,
+    onResetDemo,
+  ]);
 
   return (
     <div className="flex flex-col gap-2 w-full">
@@ -252,7 +256,7 @@ export default function StealthListener({
       <div className="w-full">
         <button
           type="button"
-          onClick={handleToggle}
+          onClick={onToggleArmed}
           className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-300 font-medium ${
             isArmed
               ? 'bg-emerald-950/70 border-emerald-500/70 text-emerald-200 shadow-lg shadow-emerald-950/60 ring-1 ring-emerald-500/50'
@@ -301,8 +305,8 @@ export default function StealthListener({
                 {isArmed ? (micSuspended ? 'ECHO GATED' : 'MIC ACTIVE') : 'STANDBY'}
               </span>
             ) : (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800">
-                MIC FALLBACK
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">
+                AWS TRANSCRIBE MIC
               </span>
             )}
           </div>
@@ -338,16 +342,14 @@ export default function StealthListener({
           {/* Engine Status Badge */}
           {engineStatus?.source === 'aws-live' ? (
             <div
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-500/80 text-emerald-300 text-[9px] font-mono cursor-help"
-              title={`Live AWS: ${engineStatus.modelUsed || 'Bedrock Nova'} + Polly`}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-500/80 text-emerald-300 text-[9px] font-mono"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>AWS LIVE • Bedrock + Polly ({engineStatus.latencyMs}ms)</span>
             </div>
           ) : engineStatus?.source === 'mock-fallback' ? (
             <div
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/90 border border-amber-600/80 text-amber-300 text-[9px] font-mono cursor-help"
-              title={engineStatus.fallbackReason || 'Stage Safe Mock Fallback'}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/90 border border-amber-600/80 text-amber-300 text-[9px] font-mono"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
               <span>MOCK FALLBACK</span>
@@ -355,7 +357,7 @@ export default function StealthListener({
           ) : (
             <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400 text-[9px] font-mono">
               <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
-              <span>PHASE 2 READY</span>
+              <span>STAGE OPS READY</span>
             </div>
           )}
         </div>
@@ -422,6 +424,45 @@ export default function StealthListener({
               </kbd>
             </button>
 
+            {/* [6] Analyze Live Ambient Audio (Amazon Transcribe) */}
+            <button
+              type="button"
+              onClick={onAnalyzeTranscribe}
+              disabled={isTranscribing}
+              className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-cyan-400 text-slate-200 transition-all text-left disabled:opacity-50"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <Radio className={`w-3.5 h-3.5 text-cyan-400 shrink-0 ${isTranscribing ? 'animate-spin' : ''}`} />
+                <span className="truncate">{isTranscribing ? 'Transcribing...' : 'Transcribe Mic'}</span>
+              </div>
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-cyan-300">
+                6
+              </kbd>
+            </button>
+
+            {/* [7] Toggle Offline Dead-Zone Simulator */}
+            <button
+              type="button"
+              onClick={onToggleOffline}
+              className={`flex items-center justify-between p-2 rounded-lg border transition-all text-left ${
+                isOffline
+                  ? 'bg-amber-950/80 border-amber-500 text-amber-200 font-bold'
+                  : 'bg-slate-900/80 hover:bg-slate-800 border-slate-800 text-slate-200'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                {isOffline ? (
+                  <WifiOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                ) : (
+                  <Wifi className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                )}
+                <span className="truncate">{isOffline ? 'Dead-Zone ON' : 'Dead-Zone Sim'}</span>
+              </div>
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-amber-300">
+                7
+              </kbd>
+            </button>
+
             {/* [0] Reset Demo State */}
             <button
               type="button"
@@ -436,6 +477,19 @@ export default function StealthListener({
                 0
               </kbd>
             </button>
+          </div>
+        )}
+
+        {/* Live Transcribe Analysis Result Strip */}
+        {transcribeResult && (
+          <div className="px-3 py-1.5 bg-cyan-950/60 border-t border-cyan-800/60 flex items-center justify-between text-[10px] font-mono text-cyan-300">
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              Transcribe ({transcribeResult.latencyMs}ms):
+            </span>
+            <span className="truncate max-w-[200px]" title={transcribeResult.transcript}>
+              &ldquo;{transcribeResult.transcript}&rdquo;
+            </span>
           </div>
         )}
 

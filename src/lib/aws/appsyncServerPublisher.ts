@@ -1,5 +1,6 @@
 import { SentinelEvent } from '@/types/sentinel';
 import { awsConfig, normalizeHost } from './config';
+import { roomToChannel } from '../room';
 
 export interface AppSyncPublishResult {
   ok: boolean;
@@ -21,10 +22,11 @@ export async function publishToAppSyncEvents(
     awsConfig.appSync.apiKey ||
     process.env.NEXT_PUBLIC_APPSYNC_EVENTS_API_KEY ||
     '';
-  const channel =
-    awsConfig.appSync.channel ||
-    process.env.NEXT_PUBLIC_APPSYNC_EVENTS_CHANNEL ||
-    '/sentinel/live';
+  const channel = event.room
+    ? roomToChannel(event.room)
+    : awsConfig.appSync.channel ||
+      process.env.NEXT_PUBLIC_APPSYNC_EVENTS_CHANNEL ||
+      '/sentinel/live';
 
   if (!httpDomain || !apiKey) {
     return {

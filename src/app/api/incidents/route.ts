@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dynamoStore } from '@/lib/aws/dynamoStore';
 import { SAFE_HAVENS, PATROLLING_RESPONDERS } from '@/lib/mockData';
+import { sanitizeRoom } from '@/lib/room';
 
 export async function GET(request: NextRequest) {
   // Reading request.url ensures runtime dynamic evaluation in Next.js 16
-  const url = request.url;
+  const room = sanitizeRoom(request.nextUrl.searchParams.get('room'));
   const useMockAws = process.env.NEXT_PUBLIC_USE_MOCK_AWS === 'true';
 
   if (useMockAws) {
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
     const [safeHavens, responders, incidents] = await Promise.all([
       dynamoStore.getSafeHavens(),
       dynamoStore.getResponders(),
-      dynamoStore.listRecentIncidents(15),
+      dynamoStore.listRecentIncidents(15, room),
     ]);
 
     return NextResponse.json({

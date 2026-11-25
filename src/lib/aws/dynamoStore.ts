@@ -64,8 +64,9 @@ export const dynamoStore = {
 
   /**
    * Lists the most recent persisted incidents, sorted descending by updatedAt in memory.
+   * Optionally filtered by room.
    */
-  async listRecentIncidents(limit = 10): Promise<PersistedIncident[]> {
+  async listRecentIncidents(limit = 10, room?: string): Promise<PersistedIncident[]> {
     try {
       const command = new QueryCommand({
         TableName: tableName,
@@ -75,7 +76,10 @@ export const dynamoStore = {
       const res = await docClient.send(command, {
         abortSignal: AbortSignal.timeout(5000),
       });
-      const items = (res.Items || []) as PersistedIncident[];
+      let items = (res.Items || []) as PersistedIncident[];
+      if (room) {
+        items = items.filter((item) => (item.room || 'live') === room);
+      }
       // Sort in-memory by updatedAt descending
       items.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
       return items.slice(0, limit);
@@ -129,6 +133,7 @@ export const dynamoStore = {
         pk,
         sk,
         incidentId,
+        room: patch.room || existing?.room || 'live',
         status: patch.status || existing?.status || 'ACTIVE',
         threatLevel: patch.threatLevel || existing?.threatLevel || 'MEDIUM',
         triggerSource: patch.triggerSource || existing?.triggerSource || 'MANUAL',

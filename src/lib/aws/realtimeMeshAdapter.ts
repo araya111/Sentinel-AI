@@ -5,6 +5,7 @@ import {
 } from '@/types/sentinel';
 import { VICTIM_INITIAL_COORDS } from '@/lib/mockData';
 import { awsConfig, normalizeHost } from './config';
+import { sanitizeRoom, roomToChannel } from '../room';
 
 export type MeshTransportStatus =
   | 'APPSYNC_LIVE'
@@ -14,14 +15,16 @@ export type MeshTransportStatus =
 
 export interface IRealtimeMeshAdapter {
   publishEvent(
-    event: Partial<SentinelEvent> & { type: IncidentEventType }
+    event: Partial<SentinelEvent> & { type: IncidentEventType },
+    room?: string
   ): Promise<SentinelEvent>;
   subscribe(
     onEvent: (event: SentinelEvent) => void,
-    onStatusChange?: (status: MeshTransportStatus) => void
+    onStatusChange?: (status: MeshTransportStatus) => void,
+    room?: string
   ): () => void;
-  dispatchResponder(responder: PatrollingResponder): Promise<SentinelEvent>;
-  resetDemo(): Promise<SentinelEvent>;
+  dispatchResponder(responder: PatrollingResponder, room?: string): Promise<SentinelEvent>;
+  resetDemo(room?: string): Promise<SentinelEvent>;
 }
 
 /**
@@ -60,8 +63,10 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
    * The server route concurrently publishes to SSE, AppSync Events, and DynamoDB.
    */
   public async publishEvent(
-    partialEvent: Partial<SentinelEvent> & { type: IncidentEventType }
+    partialEvent: Partial<SentinelEvent> & { type: IncidentEventType },
+    rawRoom?: string
   ): Promise<SentinelEvent> {
+    const room = sanitizeRoom(partialEvent.room || rawRoom);
     const eventId =
       partialEvent.eventId ||
       partialEvent.id ||
@@ -75,12 +80,16 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
       id: eventId,
       eventId,
       incidentId,
+      room,
       type: partialEvent.type,
       timestamp: partialEvent.timestamp || Date.now(),
       location: partialEvent.location || {
         lat: VICTIM_INITIAL_COORDS.lat,
         lng: VICTIM_INITIAL_COORDS.lng,
       },
+      coordinates: partialEvent.coordinates || partialEvent.location,
+      heading: partialEvent.heading,
+      mode: partialEvent.mode,
       threatLevel: partialEvent.threatLevel || 'MEDIUM',
       triggerSource: partialEvent.triggerSource || 'MANUAL',
       transcriptSnippet: partialEvent.transcriptSnippet,
@@ -117,12 +126,14 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
    */
   public subscribe(
     onEvent: (event: SentinelEvent) => void,
-    onStatusChange?: (status: MeshTransportStatus) => void
+    onStatusChange?: (status: MeshTransportStatus) => void,
+    rawRoom?: string
   ): () => void {
     if (typeof window === 'undefined') {
       return () => {};
     }
 
+    const room = sanitizeRoom(rawRoom);
     let isDisposed = false;
     let ws: WebSocket | null = null;
     let sseSource: EventSource | null = null;
@@ -166,7 +177,7 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
       if (isDisposed || sseSource) return;
       setStatus('SSE_FALLBACK');
       try {
-        sseSource = new EventSource('/api/events');
+        sseSource = new EventSource(`/api/events?room=${encodeURIComponent(room)}`);
 
         sseSource.onmessage = (e) => {
           if (isDisposed) return;
@@ -222,10 +233,7 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
         awsConfig.appSync.apiKey ||
         process.env.NEXT_PUBLIC_APPSYNC_EVENTS_API_KEY ||
         '';
-      const channel =
-        awsConfig.appSync.channel ||
-        process.env.NEXT_PUBLIC_APPSYNC_EVENTS_CHANNEL ||
-        '/sentinel/live';
+      const channel = roomToChannel(room);
 
       // If configuration is missing, fall back immediately to SSE
       if (!realtimeDomain || !httpDomain || !apiKey) {
@@ -377,7 +385,8 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
   }
 
   public async dispatchResponder(
-    responder: PatrollingResponder
+    responder: PatrollingResponder,
+    room?: string
   ): Promise<SentinelEvent> {
     return this.publishEvent({
       type: 'RESPONDER_DISPATCHED',
@@ -390,16 +399,16 @@ class RealtimeMeshAdapter implements IRealtimeMeshAdapter {
         contactPhone: responder.contactPhone,
       },
       notes: `Acknowledge & Dispatch executed. ${responder.name} dispatched with ETA ${responder.etaDisplay}.`,
-    });
+    }, room);
   }
 
-  public async resetDemo(): Promise<SentinelEvent> {
+  public async resetDemo(room?: string): Promise<SentinelEvent> {
     return this.publishEvent({
       type: 'INCIDENT_RESET',
       threatLevel: 'LOW',
       triggerSource: 'MANUAL',
       notes: 'Demo incident reset to nominal state.',
-    });
+    }, room);
   }
 }
 

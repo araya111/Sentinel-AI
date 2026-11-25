@@ -51,3 +51,37 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **AMPLIFY_LIVE_URL**: `https://main.d18h813sr0ipe4.amplifyapp.com`
 - **AMPLIFY_BRANCH**: `main`
 - **STATUS**: `SUCCEED`
+
+## 6. S3 Evidence Vault & Safe Haven Geofences (Phase 6 Live)
+- **Evidence Storage**: S3 bucket `sentinel-ai-evidence-${accountId}` for encrypted incident audio snapshots and forensic telemetry.
+- **Geofencing**: Amazon Location Service Geofence Collection `sentinel-ai-safe-havens` tracking real-time entry and exit events around active safety corridors.
+
+## 7. Amazon Transcribe Streaming & Stage Isolation (Phase 7 Live)
+- **Amazon Transcribe Streaming (`POST /api/transcribe`)**:
+  - `@aws-sdk/client-transcribe-streaming` with HTTP/2 duplex streaming generator (4096-byte PCM chunks with 400ms trailing zero silence flush).
+  - Strict RIFF/WAV subchunk parser (16kHz 16-bit mono PCM).
+  - Real-time normalized acoustic energy calculation (`0..100`) and peak dB telemetry.
+  - Client-side circular ring buffer (`pcmRingBuffer.ts`) with anti-echo clear when Polly speech completes.
+- **Stage Room Isolation**:
+  - Room parameter support (`/sentinel/<room>`) across SSE, AppSync Events, DynamoDB query filtering, and dual-screen stage shell.
+  - Presenter Stage Locker with custom room ID generator and separate Audience Sandbox QR.
+- **Live Walk Tracking (`LOCATION_PING`)**:
+  - Dedicated fast-path real-time telemetry ping bypassing DynamoDB persistence and SNS, broadcasting over AppSync Events for smooth responder dashboard tracking.
+- **Showcase Ops Scripts**:
+  - `cleanup-demo-data.mjs`: Purges only `pk = "INCIDENT"` rows in DynamoDB without disturbing seeded safe havens or responders.
+  - `teardown-aws.mjs`: Complete infrastructure decommissioner guarded behind `--confirm-destroy-sentinel-ai`.
+
+## 8. Offline PWA Resilience, Cost Shield & CloudWatch Ops (Phase 8 Live)
+- **Zero-Dependency Service Worker (`public/sw.js`) & Offline Shell (`public/offline.html`)**:
+  - Caches `/offline.html` fallback with native `sms:?body=...` emergency SOS trigger.
+  - Transparent network-first navigation handler bypassing API calls, HMR, and cross-origin requests.
+- **Security & PWA Headers (`next.config.ts`)**:
+  - `X-Frame-Options: SAMEORIGIN` (enables stage split-screen iframe embedding while blocking clickjacking).
+  - `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, strict `Permissions-Policy`.
+- **Audience Cost Shield & Rate Limiting (`src/lib/rateLimit.ts`)**:
+  - In-memory sliding-window limiter enforcing strict per-minute request caps for audience sandboxes.
+- **CloudWatch Ops Telemetry & Dashboard (`src/lib/telemetry.ts`)**:
+  - Structured single-line JSON log events emitting service metrics, latencies, and threat levels.
+  - Live Amazon CloudWatch Dashboard `sentinel-ai-ops` tracking Bedrock, Polly, DynamoDB, and SNS operations.
+- **Zero-Mock Verification Suite (`scripts/verify-aws-live.mjs`)**:
+  - 10-check automated live verification covering all 9 AWS cloud services, audio synthesis/transcription round-trip, and security headers.

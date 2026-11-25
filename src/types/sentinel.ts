@@ -4,7 +4,8 @@ export type IncidentEventType =
   | 'PHONE_DROP_DETECTED'
   | 'RESPONDER_DISPATCHED'
   | 'INCIDENT_RESET'
-  | 'SOS_FALLBACK_SENT';
+  | 'SOS_FALLBACK_SENT'
+  | 'LOCATION_PING';
 
 export type ThreatLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -104,6 +105,10 @@ export interface SentinelEvent {
   type: IncidentEventType;
   timestamp: number;
   location: Coordinates;
+  coordinates?: Coordinates;
+  heading?: number;
+  mode?: 'WALK_SIM' | 'DEVICE_GPS';
+  room?: string;
   threatLevel: ThreatLevel;
   triggerSource: TriggerSource;
   transcriptSnippet?: string;
@@ -132,6 +137,7 @@ export interface PersistedIncident {
   pk: string; // "INCIDENT"
   sk: string; // "INC#<id>"
   incidentId: string;
+  room?: string;
   status: 'ACTIVE' | 'DISPATCHED' | 'RESOLVED';
   threatLevel: ThreatLevel;
   triggerSource: TriggerSource;

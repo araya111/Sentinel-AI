@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Sentinel AI — Offline Emergency Mode</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #050811;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: #090e1a;
+      border: 1px solid #1e293b;
+      border-radius: 20px;
+      padding: 32px 24px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #ffffff;
+      margin-bottom: 12px;
+    }
+    p {
+      font-size: 14px;
+      line-height: 1.5;
+      color: #94a3b8;
+      margin-bottom: 24px;
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 14px 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: none;
+    }
+    .btn-sms {
+      background: #e11d48;
+      color: #ffffff;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 14px rgba(225, 29, 72, 0.4);
+    }
+    .btn-sms:active {
+      transform: scale(0.98);
+      background: #be123c;
+    }
+    .btn-reload {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+    }
+    .btn-reload:active {
+      transform: scale(0.98);
+      background: #334155;
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #fbbf24;
+      box-shadow: 0 0 10px #fbbf24;
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .4; }
+    }
+    .footer-note {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 20px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">
+      <span class="pulse-dot"></span>
+      OFFLINE DEAD-ZONE DETECTED
+    </div>
+    <h1>Cellular & Data Unavailable</h1>
+    <p>
+      Sentinel AI has preserved your encrypted safety state locally. If you are in immediate danger, use the direct SMS emergency link below to transmit your location via carrier SMS.
+    </p>
+
+    <!-- Native SMS emergency protocol link -->
+    <a
+      id="sms-btn"
+      class="btn btn-sms"
+      href="sms:?body=EMERGENCY%20SOS%20BEACON%20-%20SENTINEL%20AI%0AThreat%20escalation%20in%20cellular%20dead-zone.%0APlease%20dispatch%20campus%20security%20or%20emergency%20services.%0AGPS%3A%20https%3A%2F%2Fmaps.google.com%2F%3Fq%3D37.8702%2C-122.2589"
+    >
+      🚨 Send Emergency SOS via SMS
+    </a>
+
+    <button class="btn btn-reload" onclick="window.location.reload()">
+      🔄 Reconnect & Sync Sentinel Mesh
+    </button>
+
+    <div class="footer-note">
+      SENTINEL AI PROTOCOL V8 • ZERO-METADATA PWA
+    </div>
+  </div>
+
+  <script>
+    // Dynamically inject live coordinates into SMS template if cached in localStorage
+    try {
+      const cached = localStorage.getItem('sentinel_last_known_coords');
+      if (cached) {
+        const { lat, lng } = JSON.parse(cached);
+        if (lat && lng) {
+          const smsLink = document.getElementById('sms-btn');
+          const body = encodeURIComponent(
+            `🚨 EMERGENCY SOS BEACON - SENTINEL AI\nThreat escalation in dead-zone.\nGPS: https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}\nTime: ${new Date().toLocaleTimeString()}`
+          );
+          smsLink.href = `sms:?body=${body}`;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  </script>
+</body>
+</html>

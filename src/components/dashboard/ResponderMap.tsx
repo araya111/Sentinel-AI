@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Map, Marker, ErrorEvent, GeoJSONSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { SentinelEvent, PatrollingResponder } from '@/types/sentinel';
+import { SentinelEvent, PatrollingResponder, Coordinates } from '@/types/sentinel';
 import { locationAdapter } from '@/lib/aws/locationAdapter';
 import { VICTIM_INITIAL_COORDS } from '@/lib/mockData';
 
@@ -12,6 +12,7 @@ interface ResponderMapProps {
   onSelectResponder?: (responder: PatrollingResponder) => void;
   selectedResponderId?: string | null;
   respondersList?: PatrollingResponder[];
+  liveCoords?: Coordinates | null;
 }
 
 export default function ResponderMap({
@@ -19,6 +20,7 @@ export default function ResponderMap({
   onSelectResponder,
   selectedResponderId,
   respondersList,
+  liveCoords,
 }: ResponderMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
@@ -27,6 +29,13 @@ export default function ResponderMap({
   const victimMarkerRef = useRef<Marker | null>(null);
 
   const responders = respondersList || locationAdapter.getPatrollingResponders();
+
+  // Smooth live ping marker tracking without fighting map camera zoom
+  useEffect(() => {
+    if (liveCoords && victimMarkerRef.current) {
+      victimMarkerRef.current.setLngLat([liveCoords.lng, liveCoords.lat]);
+    }
+  }, [liveCoords]);
 
   // Idempotent map synchronization helper
   const syncMapData = useCallback(() => {

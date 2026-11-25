@@ -9,6 +9,9 @@ import { SentinelEvent, IncidentEventType, ThreatLevel, TriggerSource } from '@/
 import { dynamoStore } from '@/lib/aws/dynamoStore';
 import { publishToAppSyncEvents } from '@/lib/aws/appsyncServerPublisher';
 import { publishSosFallback } from '@/lib/aws/snsPublisher';
+import { sanitizeRoom } from '@/lib/room';
+import { checkRateLimit, getClientIp } from '@/lib/rateLimit';
+import { logTelemetry } from '@/lib/telemetry';
 
 export async function GET(request: NextRequest) {
   const signal = request.signal;
@@ -16,12 +19,14 @@ export async function GET(request: NextRequest) {
     return new NextResponse('Aborted', { status: 499 });
   }
 
+  const room = sanitizeRoom(request.nextUrl.searchParams.get('room'));
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const unsubscribe = subscribeSSE(controller);
+      const unsubscribe = subscribeSSE(controller, room);
 
-      // Replay active incident state (if any) immediately on connect
-      const activeIncident = getActiveIncident();
+      // Replay active incident state for this specific room immediately on connect
+      const activeIncident = getActiveIncident(room);
       if (activeIncident) {
         const encoder = new TextEncoder();
         try {
@@ -67,6 +72,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  const ip = getClientIp(request);
+
   try {
     const body = await request.json().catch(() => ({}));
     const validTypes: IncidentEventType[] = [
@@ -76,6 +84,7 @@ export async function POST(request: NextRequest) {
       'RESPONDER_DISPATCHED',
       'INCIDENT_RESET',
       'SOS_FALLBACK_SENT',
+      'LOCATION_PING',
     ];
 
     if (!body || !validTypes.includes(body.type)) {
@@ -85,6 +94,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const room = sanitizeRoom(body.room);
     const eventId = body.eventId || crypto.randomUUID();
     const incidentId =
       body.incidentId ||
@@ -115,9 +125,13 @@ export async function POST(request: NextRequest) {
       id: body.id || eventId,
       eventId,
       incidentId,
+      room,
       type: body.type,
       timestamp: body.timestamp || Date.now(),
-      location: body.location || { lat: 37.8702, lng: -122.2589 },
+      location: body.location || body.coordinates || { lat: 37.8702, lng: -122.2589 },
+      coordinates: body.coordinates || body.location,
+      heading: body.heading,
+      mode: body.mode,
       threatLevel,
       triggerSource,
       transcriptSnippet,
@@ -127,7 +141,21 @@ export async function POST(request: NextRequest) {
       snsMessageId: body.snsMessageId,
     };
 
-    // Step 1: Sub-10ms synchronous SSE broadcast so real-time stage dual-screen is instant
+    // --- SPECIAL CASE: LOCATION_PING Telemetry ---
+    // Broadcast ONLY via local SSE + AppSync Events — DO NOT write DynamoDB, DO NOT fire SNS
+    if (event.type === 'LOCATION_PING') {
+      broadcastSSE(event);
+      const appSyncRes = await publishToAppSyncEvents(event);
+      return NextResponse.json({
+        ok: true,
+        event,
+        appSyncPublished: appSyncRes.ok,
+        persistedToDynamo: false,
+        sseBroadcast: true,
+      });
+    }
+
+    // Step 1: Sub-10ms synchronous SSE broadcast within the room
     broadcastSSE(event);
 
     // Step 2: Parallel execution: AppSync publish + DynamoDB persistence + optional SNS SOS fallback
@@ -141,6 +169,7 @@ export async function POST(request: NextRequest) {
     ) {
       dynamoPromise = dynamoStore.mergeAndUpsertIncident(incidentId, {
         status: 'ACTIVE',
+        room,
         threatLevel: event.threatLevel,
         triggerSource: event.triggerSource,
         location: event.location,
@@ -151,34 +180,49 @@ export async function POST(request: NextRequest) {
     } else if (event.type === 'RESPONDER_DISPATCHED') {
       dynamoPromise = dynamoStore.mergeAndUpsertIncident(incidentId, {
         status: 'DISPATCHED',
+        room,
         dispatchedResponder: event.responder,
       });
     } else if (event.type === 'INCIDENT_RESET') {
       dynamoPromise = dynamoStore.mergeAndUpsertIncident(incidentId, {
         status: 'RESOLVED',
+        room,
       });
     } else if (event.type === 'SOS_FALLBACK_SENT') {
       dynamoPromise = dynamoStore.mergeAndUpsertIncident(incidentId, {
         snsMessageId: event.snsMessageId,
+        room,
       });
     } else {
       dynamoPromise = Promise.resolve({ success: true });
     }
 
+    const isSandbox = room === 'audience-sandbox';
     const shouldTriggerSns =
       (event.type === 'THREAT_ESCALATED' || event.type === 'PHONE_DROP_DETECTED') &&
       !event.snsMessageId;
 
-    const snsPromise = shouldTriggerSns
-      ? publishSosFallback({
+    let snsPromise = Promise.resolve(null as { ok: boolean; messageId?: string; fallbackReason?: string } | null);
+
+    if (shouldTriggerSns) {
+      const snsRate = checkRateLimit({
+        key: `sns:${room}:${ip}`,
+        limit: isSandbox ? 1 : 25,
+        windowMs: 60000,
+      });
+
+      if (snsRate.allowed) {
+        const prefix = isSandbox ? '[AUDIENCE-SANDBOX] ' : '';
+        snsPromise = publishSosFallback({
           incidentId,
           triggerType: event.triggerSource,
           threatLevel: event.threatLevel,
-          locationLabel: 'Campus Corridor',
+          locationLabel: `${prefix}Campus Corridor`,
           coordinates: event.location,
-          summary: event.notes || event.transcriptSnippet || 'Threat escalation',
-        })
-      : Promise.resolve(null);
+          summary: `${prefix}${event.notes || event.transcriptSnippet || 'Threat escalation'}`,
+        });
+      }
+    }
 
     const [appSyncResult, dynamoResult, snsResult] = await Promise.allSettled([
       appSyncPromise,
@@ -221,6 +265,7 @@ export async function POST(request: NextRequest) {
         id: fallbackEventId,
         eventId: fallbackEventId,
         incidentId,
+        room,
         type: 'SOS_FALLBACK_SENT',
         timestamp: Date.now(),
         location: event.location,
@@ -236,9 +281,18 @@ export async function POST(request: NextRequest) {
 
       // Persist snsMessageId onto DynamoDB incident record
       dynamoStore
-        .mergeAndUpsertIncident(incidentId, { snsMessageId })
+        .mergeAndUpsertIncident(incidentId, { snsMessageId, room })
         .catch(() => {});
     }
+
+    logTelemetry({
+      route: '/api/events',
+      awsService: 'AppSync Events + DynamoDB + SNS',
+      source: 'aws-live',
+      latencyMs: Date.now() - startTime,
+      room,
+      ok: true,
+    });
 
     return NextResponse.json({
       ok: true,

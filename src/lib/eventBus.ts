@@ -1,11 +1,17 @@
 import { SentinelEvent } from '@/types/sentinel';
+import { sanitizeRoom } from './room';
 
 type SSEController = ReadableStreamDefaultController<Uint8Array>;
 
+interface SSESubscriber {
+  controller: SSEController;
+  room: string;
+}
+
 interface GlobalSentinelState {
-  subscribers: Set<SSEController>;
+  subscribers: Set<SSESubscriber>;
   recentEvents: SentinelEvent[];
-  activeIncident: SentinelEvent | null;
+  activeIncidentsByRoom: Map<string, SentinelEvent>;
 }
 
 declare global {
@@ -18,58 +24,67 @@ const encoder = new TextEncoder();
 function getGlobalBus(): GlobalSentinelState {
   if (!globalThis.__sentinel_bus__) {
     globalThis.__sentinel_bus__ = {
-      subscribers: new Set<SSEController>(),
+      subscribers: new Set<SSESubscriber>(),
       recentEvents: [],
-      activeIncident: null,
+      activeIncidentsByRoom: new Map<string, SentinelEvent>(),
     };
   }
   return globalThis.__sentinel_bus__;
 }
 
-export function subscribeSSE(controller: SSEController): () => void {
+export function subscribeSSE(
+  controller: SSEController,
+  rawRoom = 'live'
+): () => void {
   const bus = getGlobalBus();
-  bus.subscribers.add(controller);
+  const room = sanitizeRoom(rawRoom);
+  const subscriber: SSESubscriber = { controller, room };
+  bus.subscribers.add(subscriber);
 
   return () => {
-    bus.subscribers.delete(controller);
+    bus.subscribers.delete(subscriber);
   };
 }
 
 export function broadcastSSE(event: SentinelEvent): void {
   const bus = getGlobalBus();
+  const eventRoom = sanitizeRoom(event.room);
 
-  // Maintain circular buffer of latest 20 events
+  // Maintain circular buffer of latest 30 events
   bus.recentEvents.unshift(event);
-  if (bus.recentEvents.length > 20) {
+  if (bus.recentEvents.length > 30) {
     bus.recentEvents.pop();
   }
 
-  // Track active incident state
+  // Track active incident state per room
   if (event.type === 'INCIDENT_RESET') {
-    bus.activeIncident = null;
+    bus.activeIncidentsByRoom.delete(eventRoom);
   } else if (
     event.type === 'STEALTH_TRIGGERED' ||
     event.type === 'THREAT_ESCALATED' ||
     event.type === 'PHONE_DROP_DETECTED' ||
     event.type === 'RESPONDER_DISPATCHED'
   ) {
-    bus.activeIncident = event;
+    bus.activeIncidentsByRoom.set(eventRoom, event);
   }
 
   const payload = `data: ${JSON.stringify(event)}\n\n`;
   const bytes = encoder.encode(payload);
 
-  const deadControllers: SSEController[] = [];
+  const deadSubscribers: SSESubscriber[] = [];
 
-  for (const controller of bus.subscribers) {
-    try {
-      controller.enqueue(bytes);
-    } catch {
-      deadControllers.push(controller);
+  for (const sub of bus.subscribers) {
+    // Only deliver event if subscriber is in the matching room
+    if (sub.room === eventRoom) {
+      try {
+        sub.controller.enqueue(bytes);
+      } catch {
+        deadSubscribers.push(sub);
+      }
     }
   }
 
-  for (const dead of deadControllers) {
+  for (const dead of deadSubscribers) {
     bus.subscribers.delete(dead);
   }
 }
@@ -77,25 +92,30 @@ export function broadcastSSE(event: SentinelEvent): void {
 export function sendHeartbeat(): void {
   const bus = getGlobalBus();
   const pingBytes = encoder.encode(': ping\n\n');
-  const deadControllers: SSEController[] = [];
+  const deadSubscribers: SSESubscriber[] = [];
 
-  for (const controller of bus.subscribers) {
+  for (const sub of bus.subscribers) {
     try {
-      controller.enqueue(pingBytes);
+      sub.controller.enqueue(pingBytes);
     } catch {
-      deadControllers.push(controller);
+      deadSubscribers.push(sub);
     }
   }
 
-  for (const dead of deadControllers) {
+  for (const dead of deadSubscribers) {
     bus.subscribers.delete(dead);
   }
 }
 
-export function getRecentEvents(): SentinelEvent[] {
-  return getGlobalBus().recentEvents;
+export function getRecentEvents(rawRoom?: string): SentinelEvent[] {
+  const bus = getGlobalBus();
+  if (!rawRoom) return bus.recentEvents;
+  const room = sanitizeRoom(rawRoom);
+  return bus.recentEvents.filter((e) => sanitizeRoom(e.room) === room);
 }
 
-export function getActiveIncident(): SentinelEvent | null {
-  return getGlobalBus().activeIncident;
+export function getActiveIncident(rawRoom = 'live'): SentinelEvent | null {
+  const bus = getGlobalBus();
+  const room = sanitizeRoom(rawRoom);
+  return bus.activeIncidentsByRoom.get(room) || null;
 }
