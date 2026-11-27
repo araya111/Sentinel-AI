@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Sentinel AI — Proactive Navigation & Generative Deterrence',
-    short_name: 'Sentinel AI',
+    name: 'SafeHaven — Proactive Navigation & Generative Deterrence',
+    short_name: 'SafeHaven',
     description:
       'Zero-touch generative voice deterrence, illuminated brightest routes, and campus real-time mesh safety network.',
     start_url: '/mobile',

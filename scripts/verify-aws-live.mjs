@@ -89,7 +89,7 @@ async function runCheck(number, title, fn) {
 async function main() {
   const targetUrl = parseUrlArg();
   console.log('\n======================================================');
-  console.log('   SENTINEL AI — 10-CHECK ZERO-MOCK VERIFICATION      ');
+  console.log('   SAFEHAVEN — 10-CHECK ZERO-MOCK VERIFICATION        ');
   console.log('======================================================');
   console.log(`Target URL:  ${targetUrl}`);
   console.log(`AWS Region:  us-east-1`);
@@ -318,7 +318,7 @@ async function main() {
   console.log('\n======================================================');
   if (allPassed) {
     console.log('🎉 ALL 10 ZERO-MOCK AWS & OPS CHECKS PASSED!');
-    console.log('Sentinel AI is fully live, resilient, and showcase-ready.');
+    console.log('SafeHaven is fully live, resilient, and showcase-ready.');
     console.log('======================================================\n');
     process.exit(0);
   } else {

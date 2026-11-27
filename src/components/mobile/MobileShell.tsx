@@ -594,7 +594,7 @@ export default function MobileShell() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <h1 className="text-xs font-bold tracking-tight text-white">SENTINEL AI</h1>
+              <h1 className="text-xs font-bold tracking-tight text-white">SAFEHAVEN</h1>
               <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-900/50 text-cyan-300 border border-cyan-700/50">
                 Room: {room}
               </span>
@@ -686,7 +686,7 @@ export default function MobileShell() {
           <div className="mt-1.5 flex items-center gap-2">
             <a
               href={`sms:?body=${encodeURIComponent(
-                `🚨 SENTINEL SOS BEACON (DEAD-ZONE)\nROOM: ${room}\nGPS: https://maps.google.com/?q=${userCoords.lat.toFixed(5)},${userCoords.lng.toFixed(5)}\nThreat escalation detected offline.`
+                `🚨 SAFEHAVEN SOS BEACON (DEAD-ZONE)\nROOM: ${room}\nGPS: https://maps.google.com/?q=${userCoords.lat.toFixed(5)},${userCoords.lng.toFixed(5)}\nThreat escalation detected offline.`
               )}`}
               className="flex-1 text-center py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] shadow-sm transition-colors"
             >

@@ -99,7 +99,7 @@ function StageLauncherPageContent() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-extrabold tracking-tight text-white">
-                SENTINEL AI
+                SAFEHAVEN
               </span>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-800 text-cyan-300">
                 AWS BUILDER CONNECT SHOWCASE
@@ -310,7 +310,7 @@ function StageLauncherPageContent() {
                 <iframe
                   key={`mobile-${room}`}
                   src={`/mobile?room=${encodeURIComponent(room)}`}
-                  title="Sentinel AI Mobile PWA"
+                  title="SafeHaven Mobile PWA"
                   className="w-full h-full max-w-[430px] rounded-2xl border border-slate-800 shadow-2xl"
                 />
               </div>
@@ -331,7 +331,7 @@ function StageLauncherPageContent() {
                 <iframe
                   key={`dashboard-${room}`}
                   src={`/dashboard?room=${encodeURIComponent(room)}`}
-                  title="Sentinel AI Campus Responder Command"
+                  title="SafeHaven Campus Responder Command"
                   className="w-full h-full rounded-2xl border border-slate-800 shadow-2xl"
                 />
               </div>
@@ -347,7 +347,7 @@ function StageLauncherPageContent() {
               AWS Builder Connect Stage Demo Architecture
             </h2>
             <p className="text-sm text-slate-300 leading-relaxed">
-              Sentinel AI solves late-night campus vulnerability through zero-touch ambient listening,
+              SafeHaven solves late-night campus vulnerability through zero-touch ambient listening,
               proactive illumination routing, and multi-modal generative deterrence across 9 AWS services.
             </p>
 

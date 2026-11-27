@@ -8,7 +8,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-# Sentinel AI — Project Guardrails & Architecture Invariants
+# SafeHaven — Project Guardrails & Architecture Invariants
 
 ## 1. Core Framework & Constraints
 - **Framework**: Next.js 16 (App Router, Turbopack), React 19, TypeScript strict (`"strict": true`), Tailwind CSS v4 (CSS-first, `@import "tailwindcss";`, no legacy `tailwind.config.ts`).

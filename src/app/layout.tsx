@@ -3,14 +3,14 @@ import './globals.css';
 import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
 
 export const metadata: Metadata = {
-  title: 'Sentinel AI — Proactive Navigation & Generative Deterrence',
+  title: 'SafeHaven — Proactive Navigation & Generative Deterrence',
   description:
     'Real-time proactive navigation, generative voice deterrence, and campus responder mesh built for AWS Builder Connect Showcase.',
-  applicationName: 'Sentinel AI',
+  applicationName: 'SafeHaven',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Sentinel AI',
+    title: 'SafeHaven',
   },
 };
 

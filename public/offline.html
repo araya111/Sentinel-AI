@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Sentinel AI — Offline Emergency Mode</title>
+  <title>SafeHaven — Offline Emergency Mode</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -117,24 +117,24 @@
     </div>
     <h1>Cellular & Data Unavailable</h1>
     <p>
-      Sentinel AI has preserved your encrypted safety state locally. If you are in immediate danger, use the direct SMS emergency link below to transmit your location via carrier SMS.
+      SafeHaven has preserved your encrypted safety state locally. If you are in immediate danger, use the direct SMS emergency link below to transmit your location via carrier SMS.
     </p>
 
     <!-- Native SMS emergency protocol link -->
     <a
       id="sms-btn"
       class="btn btn-sms"
-      href="sms:?body=EMERGENCY%20SOS%20BEACON%20-%20SENTINEL%20AI%0AThreat%20escalation%20in%20cellular%20dead-zone.%0APlease%20dispatch%20campus%20security%20or%20emergency%20services.%0AGPS%3A%20https%3A%2F%2Fmaps.google.com%2F%3Fq%3D37.8702%2C-122.2589"
+      href="sms:?body=EMERGENCY%20SOS%20BEACON%20-%20SAFEHAVEN%0AThreat%20escalation%20in%20cellular%20dead-zone.%0APlease%20dispatch%20campus%20security%20or%20emergency%20services.%0AGPS%3A%20https%3A%2F%2Fmaps.google.com%2F%3Fq%3D37.8702%2C-122.2589"
     >
       🚨 Send Emergency SOS via SMS
     </a>
 
     <button class="btn btn-reload" onclick="window.location.reload()">
-      🔄 Reconnect & Sync Sentinel Mesh
+      🔄 Reconnect & Sync SafeHaven Mesh
     </button>
 
     <div class="footer-note">
-      SENTINEL AI PROTOCOL V8 • ZERO-METADATA PWA
+      SAFEHAVEN PROTOCOL V8 • ZERO-METADATA PWA
     </div>
   </div>
 
@@ -147,7 +147,7 @@
         if (lat && lng) {
           const smsLink = document.getElementById('sms-btn');
           const body = encodeURIComponent(
-            `🚨 EMERGENCY SOS BEACON - SENTINEL AI\nThreat escalation in dead-zone.\nGPS: https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}\nTime: ${new Date().toLocaleTimeString()}`
+            `🚨 EMERGENCY SOS BEACON - SAFEHAVEN\nThreat escalation in dead-zone.\nGPS: https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}\nTime: ${new Date().toLocaleTimeString()}`
           );
           smsLink.href = `sms:?body=${body}`;
         }
