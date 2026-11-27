@@ -1,6 +1,6 @@
-# Sentinel AI — Architectural Nodes, Flush Lifecycle & Machine Execution Pipeline
+# SafeHaven — Architectural Nodes, Flush Lifecycle & Machine Execution Pipeline
 
-This document provides a technical walkthrough of **Sentinel AI**, detailing every execution node, flush cycle, data synchronization boundary, and the exact operations the system performs at each stage.
+This document provides a technical walkthrough of **SafeHaven**, detailing every execution node, flush cycle, data synchronization boundary, and the exact operations the system performs at each stage.
 
 ---
 
